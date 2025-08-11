@@ -206,6 +206,16 @@ def analyze_page(url: str) -> Dict:
     # JSON-LD Schema
     schema_jsonld = has_json_ld(soup)
 
+    # Content quality & structure
+visible_text = visible_text_from_soup(soup)
+fre = flesch_reading_ease(visible_text)
+orig = originality_heuristic(visible_text)
+tone = tone_heuristic(visible_text)
+headings_meta = heading_audit(soup)
+anchor_q = internal_anchor_quality(soup, base_domain)
+js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
+
+
     # Links
     a_tags = soup.find_all("a")
     base_domain = extract_domain(result.get("_final_url") or url)
@@ -291,11 +301,114 @@ def analyze_page(url: str) -> Dict:
         "noindex": is_noindex,
         "psi_scores": psi_scores,
         "cwv": cwv,
+        "readability_fre": None if fre is None else round(fre, 1),
+        "originality": orig,
+        "tone": tone,
+        "headings": headings_meta,
+        "anchor_quality": anchor_q,
+        "js_reliance": js_meta,
+
     })
 
     # Compute sub-scores (0-100)
     result.update(compute_scores(result))
     return result
+
+# ----------------------------- Content & Structure Analysis Helpers -----------------------------
+def visible_text_from_soup(soup: BeautifulSoup) -> str:
+    for tag in soup(["script", "style", "noscript"]):
+        tag.extract()
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+def split_sentences(text: str) -> List[str]:
+    bits = re.split(r"(?<=[.!?])\s+", text)
+    return [b.strip() for b in bits if b.strip()]
+
+def count_syllables(word: str) -> int:
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if not w: return 0
+    vowels = "aeiouy"
+    syll = 0
+    prev_v = False
+    for ch in w:
+        v = ch in vowels
+        if v and not prev_v: syll += 1
+        prev_v = v
+    if w.endswith("e") and syll > 1: syll -= 1
+    return max(1, syll)
+
+def flesch_reading_ease(text: str) -> Optional[float]:
+    words = re.findall(r"[A-Za-z']+", text)
+    sents = split_sentences(text)
+    if not words or not sents: return None
+    w = len(words); s = max(1, len(sents))
+    syll = sum(count_syllables(tok) for tok in words)
+    return 206.835 - 1.015 * (w/s) - 84.6 * (syll/w)
+
+def originality_heuristic(text: str) -> Dict:
+    words = [w.lower() for w in re.findall(r"[A-Za-z']+", text)]
+    w = len(words); unique = len(set(words))
+    ttr = (unique / w) if w else 0.0
+    trigrams = [tuple(words[i:i+3]) for i in range(max(0, w-2))]
+    from collections import Counter
+    c = Counter(trigrams)
+    rep = sum(1 for k, v in c.items() if v > 1)
+    rep_ratio = (rep / max(1, len(c))) if c else 0.0
+    return {"ttr": round(ttr, 3), "repeated_trigram_ratio": round(rep_ratio, 3)}
+
+def tone_heuristic(text: str) -> Dict:
+    tokens = [w.lower() for w in re.findall(r"[A-Za-z']+", text)]
+    total = len(tokens)
+    exclam = text.count("!")
+    adverbs = sum(1 for w in tokens if w.endswith("ly") and len(w) > 3)
+    buzz = {"best","amazing","revolutionary","ultimate","incredible","guaranteed","exclusive","limited"}
+    buzz_count = sum(1 for w in tokens if w in buzz)
+    you_rate = sum(1 for w in tokens if w in {"you","your","yours"})
+    return {
+        "exclamation_density": round(exclam / max(1, len(split_sentences(text))), 3),
+        "adverb_rate": round(adverbs / max(1, total), 3),
+        "buzz_rate": round(buzz_count / max(1, total), 3),
+        "second_person_rate": round(you_rate / max(1, total), 3),
+    }
+
+def heading_audit(soup: BeautifulSoup) -> Dict:
+    headings = []
+    for level in range(1, 7):
+        for h in soup.find_all(f"h{level}"):
+            headings.append({"level": level, "text": (h.get_text(" ", strip=True) or "").strip()})
+    h1 = sum(1 for h in headings if h["level"] == 1)
+    h2 = sum(1 for h in headings if h["level"] == 2)
+    empty = sum(1 for h in headings if not h["text"])
+    dom_levels = [int(n.name[1]) for n in soup.find_all(["h1","h2","h3","h4","h5","h6"])]
+    skips = sum(1 for a,b in zip(dom_levels, dom_levels[1:]) if b - a > 1)
+    return {"h_total": len(headings), "h1_count": h1, "h2_count": h2, "empty_headings": empty, "level_skips": skips}
+
+def internal_anchor_quality(soup: BeautifulSoup, base_domain: str) -> Dict:
+    bad = {"click here","read more","learn more","more","here"}
+    total = 0; good = 0
+    for a in soup.find_all("a"):
+        href = a.get("href") or ""
+        txt = (a.get_text(" ", strip=True) or "").lower()
+        if is_internal(href, base_domain):
+            total += 1
+            if len(txt) >= 4 and txt not in bad: good += 1
+    return {"internal_total": total, "descriptive_ratio": round((good/total) if total else 1.0, 3)}
+
+def js_reliance_metrics(soup: BeautifulSoup, html_bytes: Optional[int]) -> Dict:
+    scripts = soup.find_all("script")
+    ext = sum(1 for s in scripts if s.get("src"))
+    inline_chars = sum(len((s.string or "")) for s in scripts if not s.get("src"))
+    text_bytes = len(visible_text_from_soup(soup).encode("utf-8", errors="ignore"))
+    ratio = (text_bytes / max(1, (html_bytes or 0))) if html_bytes else None
+    return {
+        "script_count": len(scripts),
+        "external_script_count": ext,
+        "inline_script_chars": inline_chars,
+        "text_to_html_ratio": round(ratio, 3) if ratio is not None else None,
+    }
+# ----------------------------- Scoring -----------------------------
 
 
 # ----------------------------- Scoring -----------------------------
@@ -404,6 +517,53 @@ def score_performance(meta: Dict) -> int:
     return int(round(clamp(s, 0, 100)))
 
 
+def score_readability(fre: Optional[float]) -> int:
+    if fre is None: return 50  # unknown
+    # Flesch: 90-100 (very easy) .. 0-30 (college). Aim for 50–70 for web.
+    if 50 <= fre <= 70: return 100
+    if fre > 70: return int(max(70, min(100, 70 + (fre-70)*1)))   # slightly reward easier
+    # below 50: penalize
+    return int(max(0, 100 - (50 - fre) * 2))
+
+def score_originality(h: Dict) -> int:
+    ttr = h.get("ttr", 0); rep = h.get("repeated_trigram_ratio", 0)
+    s = 0
+    s += min(70, ttr * 100)           # encourage lexical variety
+    s += max(0, 30 - rep * 100)       # penalize repetition
+    return int(max(0, min(100, s)))
+
+def score_tone(h: Dict) -> int:
+    # Reward low exclamation/buzz; neutral adverb/2nd-person rates
+    s = 100
+    s -= min(30, h.get("exclamation_density", 0) * 60)
+    s -= min(30, h.get("buzz_rate", 0) * 200)
+    # gentle nudges
+    s -= min(10, abs(h.get("adverb_rate", 0) - 0.06) * 100)
+    s -= min(10, abs(h.get("second_person_rate", 0) - 0.01) * 100)
+    return int(max(0, min(100, s)))
+
+def score_headings(h: Dict) -> int:
+    s = 100
+    if h.get("h1_count", 0) == 0: s -= 40
+    if h.get("h1_count", 0) > 1: s -= 20
+    if h.get("h2_count", 0) == 0: s -= 15
+    s -= min(25, h.get("level_skips", 0) * 10)
+    s -= min(20, h.get("empty_headings", 0) * 5)
+    return int(max(0, min(100, s)))
+
+def score_internal_anchor_quality(aq: Dict) -> int:
+    return int(round((aq.get("descriptive_ratio", 0) or 0) * 100))
+
+def score_js_reliance(js: Dict) -> int:
+    # Fewer scripts & decent text/HTML ratio is better
+    s = 100
+    s -= min(40, max(0, js.get("script_count", 0) - 5) * 4)
+    s -= min(20, max(0, js.get("external_script_count", 0) - 3) * 3)
+    ratio = js.get("text_to_html_ratio")
+    if ratio is not None and ratio < 0.2:
+        s -= min(30, (0.2 - ratio) * 200)
+    return int(max(0, min(100, s)))
+
 def compute_scores(meta: Dict) -> Dict:
     scores = {}
     scores["score_title"] = score_title(meta.get("title_len", 0))
@@ -415,24 +575,38 @@ def compute_scores(meta: Dict) -> Dict:
     scores["score_social"] = score_social(meta)
     scores["score_performance"] = score_performance(meta)
 
+    # NEW
+    scores["score_readability"] = score_readability(meta.get("readability_fre"))
+    scores["score_originality"] = score_originality(meta.get("originality", {}))
+    scores["score_tone"] = score_tone(meta.get("tone", {}))
+    scores["score_heading_structure"] = score_headings(meta.get("headings", {}))
+    scores["score_anchor_quality"] = score_internal_anchor_quality(meta.get("anchor_quality", {}))
+    scores["score_js"] = score_js_reliance(meta.get("js_reliance", {}))
+
     # Weighted overall
     weights = {
-        "score_title": 1.2,
-        "score_meta_desc": 1.0,
-        "score_h1": 0.8,
-        "score_links": 0.8,
-        "score_images_alt": 0.6,
+        "score_title": 1.0,
+        "score_meta_desc": 0.9,
+        "score_h1": 0.6,
+        "score_links": 0.6,
+        "score_images_alt": 0.5,
         "score_tech": 1.4,
-        "score_social": 0.6,
-        "score_performance": 1.6,
+        "score_social": 0.5,
+        "score_performance": 1.4,
+        # NEW weights
+        "score_readability": 1.0,
+        "score_originality": 0.8,
+        "score_tone": 0.5,
+        "score_heading_structure": 1.0,
+        "score_anchor_quality": 0.7,
+        "score_js": 0.9,
     }
     total_w = sum(weights.values())
-    overall = 0.0
-    for k, w in weights.items():
-        overall += scores[k] * w
+    overall = sum(scores[k] * w for k, w in weights.items())
     scores["overall_score"] = int(round(overall / total_w))
     scores["_weights"] = weights
     return scores
+
 
 
 # ----------------------------- UI -----------------------------
