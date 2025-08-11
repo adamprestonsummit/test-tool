@@ -670,16 +670,24 @@ if run_btn and default_domain:
 
     # ----- Radar chart of category scores -----
     st.subheader("Category Radar")
-    cats = [
-        ("Title", "score_title"),
-        ("Meta", "score_meta_desc"),
-        ("H1", "score_h1"),
-        ("Links", "score_links"),
-        ("Alt", "score_images_alt"),
-        ("Tech", "score_tech"),
-        ("Social", "score_social"),
-        ("Perf", "score_performance"),
-    ]
+   cats = [
+    ("Title", "score_title"),
+    ("Meta", "score_meta_desc"),
+    ("H1", "score_h1"),
+    ("Links", "score_links"),
+    ("Alt", "score_images_alt"),
+    ("Tech", "score_tech"),
+    ("Social", "score_social"),
+    ("Perf", "score_performance"),
+    # NEW
+    ("Readability", "score_readability"),
+    ("Originality", "score_originality"),
+    ("Tone", "score_tone"),
+    ("Headings", "score_heading_structure"),
+    ("Anchors", "score_anchor_quality"),
+    ("JS Reliance", "score_js"),
+]
+
     fig = go.Figure()
     theta = [c[0] for c in cats]
     for r in results:
@@ -689,16 +697,19 @@ if run_btn and default_domain:
     st.plotly_chart(fig, use_container_width=True)
 
     # ----- Overall score bar chart -----
-    st.subheader("Overall Score Comparison")
+  st.subheader("Overall Score Comparison")
     fig2 = px.bar(
-        x=[r.get("_domain") for r in results],
-        y=[r.get("overall_score") for r in results],
-        labels={"x": "Domain", "y": "Overall Score"},
-        text=[r.get("overall_score") for r in results],
+    x=[r.get("_domain") for r in results],
+    y=[r.get("overall_score") for r in results],
+    color=[r.get("_domain") for r in results],  # color by domain for distinct hues
+    color_discrete_sequence=px.colors.qualitative.Set2,  # pleasant, clearly distinct palette
+    labels={"x": "Domain", "y": "Overall Score"},
+    text=[r.get("overall_score") for r in results],
     )
-    fig2.update_traces(textposition='outside')
+    fig2.update_traces(textposition="outside")
     fig2.update_yaxes(range=[0, 100])
     st.plotly_chart(fig2, use_container_width=True)
+
 
     # ----- Detail expanders -----
     st.subheader("Details by Site")
@@ -723,6 +734,24 @@ if run_btn and default_domain:
                     "Meta desc length": r.get("meta_desc_len"),
                     "H1 count": r.get("h1_count"),
                     "Canonical": r.get("canonical"),
+                st.markdown("**Content Quality**")
+                st.write({
+                    "Flesch Reading Ease": r.get("readability_fre"),
+                    "Originality (TTR)": r.get("originality", {}).get("ttr"),
+                    "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
+                    "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
+                    "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
+                })
+
+            st.markdown("**Headings**")
+            st.write(r.get("headings"))
+
+            st.markdown("**Internal Link Anchors**")
+            st.write(r.get("anchor_quality"))
+
+            st.markdown("**JS Reliance**")
+            st.write(r.get("js_reliance"))
+
                 })
                 st.markdown("**Content Stats**")
                 st.write({
