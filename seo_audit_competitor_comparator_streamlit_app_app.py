@@ -11,6 +11,7 @@
 # - Compares multiple competitors side-by-side
 # - Shows radar + bar charts and detailed factor breakdowns
 # - Lets you download CSV/JSON of results
+# - NEW: Generates prescriptive recommendations for low-scoring areas
 
 import os
 import re
@@ -29,7 +30,7 @@ USER_AGENT = "Mozilla/5.0 (compatible; SEOAuditBot/1.0; +https://example.com/aud
 TIMEOUT = 15
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Language": "en"}
 
-# ----------------------------- Helpers -----------------------------
+# ----------------------------- Basic Helpers -----------------------------
 
 def normalize_url(domain_or_url: str) -> str:
     x = domain_or_url.strip()
@@ -269,154 +270,6 @@ def js_reliance_metrics(soup: BeautifulSoup, html_bytes: Optional[int]) -> Dict:
         "text_to_html_ratio": round(ratio, 3) if ratio is not None else None,
     }
 
-# ----------------------------- Analysis & Scoring -----------------------------
-
-def analyze_page(url: str) -> Dict:
-    html, fetch_meta = get_home_html(url)
-    result = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
-    result.update(fetch_meta)
-
-    if fetch_meta.get("error") or not html:
-        return result
-
-    soup = parse_html(html)
-
-    # Prepare domain for internal link checks
-    base_domain = extract_domain(result.get("_final_url") or url)
-
-    # Title
-    title_tag = soup.find("title")
-    title = (title_tag.get_text(strip=True) if title_tag else None) or ""
-    title_len = len(title)
-
-    # Meta description
-    meta_desc = find_meta_tag(soup, name="description") or ""
-    meta_desc_len = len(meta_desc)
-
-    # H1
-    h1s = [h.get_text(strip=True) for h in soup.find_all("h1")]
-    h1_count = len(h1s)
-
-    # Canonical
-    canonical = None
-    link_canon = soup.find("link", rel=lambda v: v and "canonical" in v)
-    if link_canon is not None and link_canon.get("href"):
-        canonical = link_canon["href"].strip()
-
-    # Open Graph / Twitter
-    og_title = find_meta_tag(soup, prop="og:title")
-    og_desc = find_meta_tag(soup, prop="og:description")
-    tw_title = find_meta_tag(soup, name="twitter:title")
-    tw_desc = find_meta_tag(soup, name="twitter:description")
-
-    # JSON-LD Schema
-    schema_jsonld = has_json_ld(soup)
-
-    # Content quality & structure
-    visible_text = visible_text_from_soup(soup)
-    fre = flesch_reading_ease(visible_text)
-    orig = originality_heuristic(visible_text)
-    tone = tone_heuristic(visible_text)
-    headings_meta = heading_audit(soup)
-    anchor_q = internal_anchor_quality(soup, base_domain)
-    js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
-
-    # Links
-    a_tags = soup.find_all("a")
-    internal = 0
-    external = 0
-    for a in a_tags:
-        href = a.get("href") or ""
-        if is_internal(href, base_domain):
-            internal += 1
-        elif href.startswith("http://") or href.startswith("https://"):
-            external += 1
-
-    # Images
-    imgs = soup.find_all("img")
-    img_count = len(imgs)
-    img_alt_with = sum(1 for im in imgs if (im.get("alt") or "").strip())
-    img_alt_ratio = (img_alt_with / img_count) if img_count else 1.0
-
-    # Robots & Sitemap
-    robots = get_robots_txt(url)
-    sitemap_present = has_sitemap(url, robots.get("sitemaps", []))
-
-    # Mobile meta viewport
-    viewport = soup.find("meta", attrs={"name": "viewport"}) is not None
-
-    # Noindex
-    robots_meta = find_meta_tag(soup, name="robots") or ""
-    is_noindex = "noindex" in robots_meta.lower()
-
-    # Performance proxy: response time + PSI if available
-    cwv = {}
-    psi_scores = {}
-    psi_key = os.environ.get("PSI_API_KEY")
-    try:
-        if psi_key:
-            psi_url = (
-                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
-                f"?url={requests.utils.quote(result.get('_final_url') or url, safe='')}"
-                f"&key={psi_key}&category=performance&category=seo&category=accessibility&category=pwa&strategy=mobile"
-            )
-            r, err = http_get(psi_url)
-            if r and r.status_code == 200:
-                data = r.json()
-                lh = data.get("lighthouseResult", {})
-                cats = lh.get("categories", {})
-                for k, v in cats.items():
-                    if isinstance(v, dict) and "score" in v and v["score"] is not None:
-                        psi_scores[k] = round(float(v["score"]) * 100)
-                metrics = data.get("loadingExperience", {}).get("metrics", {})
-
-                def pct_good(key):
-                    m = metrics.get(key, {})
-                    d = m.get("distributions", [])
-                    good = next((x for x in d if x.get("min") == 0), None)
-                    return int(round((good.get("proportion", 0) * 100))) if good else None
-
-                cwv = {
-                    "LCP_ms": (lh.get("audits", {}).get("largest-contentful-paint", {}).get("numericValue")),
-                    "CLS": (lh.get("audits", {}).get("cumulative-layout-shift", {}).get("numericValue")),
-                    "INP_ms": (lh.get("audits", {}).get("interaction-to-next-paint", {}).get("numericValue")),
-                    "GOOD_LCP_%": pct_good("LARGEST_CONTENTFUL_PAINT_MS"),
-                    "GOOD_CLS_%": pct_good("CUMULATIVE_LAYOUT_SHIFT"),
-                    "GOOD_INP_%": pct_good("INTERACTION_TO_NEXT_PAINT"),
-                }
-    except Exception:
-        pass
-
-    result.update({
-        "title": title,
-        "title_len": title_len,
-        "meta_desc_len": meta_desc_len,
-        "h1_count": h1_count,
-        "canonical": canonical or "",
-        "og_present": bool(og_title or og_desc),
-        "twitter_present": bool(tw_title or tw_desc),
-        "schema_jsonld": schema_jsonld,
-        "internal_links": internal,
-        "external_links": external,
-        "images": img_count,
-        "img_alt_ratio": round(img_alt_ratio, 3),
-        "robots_exists": robots.get("exists", False),
-        "sitemap_exists": sitemap_present,
-        "viewport_meta": viewport,
-        "noindex": is_noindex,
-        "psi_scores": psi_scores,
-        "cwv": cwv,
-        "readability_fre": None if fre is None else round(fre, 1),
-        "originality": orig,
-        "tone": tone,
-        "headings": headings_meta,
-        "anchor_quality": anchor_q,
-        "js_reliance": js_meta,
-    })
-
-    result.update(compute_scores(result))
-    return result
-
 # ----------------------------- Scoring -----------------------------
 
 def clamp(v, lo, hi):
@@ -613,12 +466,207 @@ def compute_scores(meta: Dict) -> Dict:
     scores["_weights"] = weights
     return scores
 
+# ----------------------------- Recommendations -----------------------------
+
+LOW = 70  # threshold for "low" score guidance
+
+RECS = {
+    "score_title": "Rewrite the <title> to 35–65 characters, include a primary keyword near the start, and keep it unique.",
+    "score_meta_desc": "Write a 70–160 character meta description with a benefit-led CTA and the main keyword naturally.",
+    "score_h1": "Use exactly one clear, descriptive H1 that matches the page’s topic.",
+    "score_links": "Improve internal linking — add contextual links to key pages; keep internal ~40–85% of all links.",
+    "score_images_alt": "Add descriptive, concise alt text to images (skip purely decorative ones).",
+    "score_tech": "Fix technical basics: enforce HTTPS, valid status 200, robots.txt, sitemap.xml, mobile viewport, avoid noindex.",
+    "score_social": "Add Open Graph & Twitter Card tags; include JSON-LD structured data.",
+    "score_performance": "Speed up: compress images, lazy-load media, minify assets, enable caching/HTTP2; fix CWV regressions.",
+    "score_readability": "Write in plain language with short sentences and scannable paragraphs; aim Flesch 50–70.",
+    "score_originality": "Reduce repetition, add unique insights/data/examples; avoid boilerplate phrasing.",
+    "score_tone": "Dial down hype/buzzwords, reduce exclamations; prefer concrete benefits and specifics.",
+    "score_heading_structure": "Fix heading hierarchy: one H1, use H2s for sections; avoid skipping levels or empty headings.",
+    "score_anchor_quality": "Use descriptive anchor text for internal links (avoid ‘click here’/‘read more’).",
+    "score_js": "Trim JavaScript: remove unused scripts, defer non-critical JS, and ensure core content is server-rendered.",
+}
+
+
+def generate_recommendations(r: Dict) -> List[str]:
+    msgs: List[str] = []
+    # Generic: any low score
+    for key, msg in RECS.items():
+        if r.get(key) is not None and r.get(key) < LOW:
+            msgs.append(f"{key.replace('score_', '').replace('_', ' ').title()}: {msg}")
+
+    # Specific, data-driven nudges
+    if r.get("title_len", 0) < 35:
+        msgs.append("Title is short — expand to include a primary keyword and value prop (35–65 chars).")
+    if r.get("title_len", 0) > 65:
+        msgs.append("Title is long — trim to ~60 chars to avoid truncation.")
+    if r.get("meta_desc_len", 0) == 0:
+        msgs.append("Missing meta description — add 70–160 chars compelling summary.")
+    if r.get("h1_count", 0) == 0:
+        msgs.append("Missing H1 — add one descriptive H1.")
+    if r.get("headings", {}).get("level_skips", 0) > 0:
+        msgs.append("Heading level skips detected (e.g., H2 → H4) — keep hierarchy sequential.")
+    aq = r.get("anchor_quality", {})
+    if aq.get("internal_total", 0) >= 5 and (aq.get("descriptive_ratio", 1.0) < 0.7):
+        msgs.append("Many internal links use vague anchors — replace with descriptive text.")
+    js = r.get("js_reliance", {})
+    if js.get("script_count", 0) > 10:
+        msgs.append("High script count — audit and remove non-essential JS.")
+    if js.get("text_to_html_ratio") is not None and js.get("text_to_html_ratio") < 0.15:
+        msgs.append("Very low text-to-HTML ratio — core content may be thin or JS-reliant.")
+    return msgs
+
+# ----------------------------- Analysis -----------------------------
+
+def analyze_page(url: str) -> Dict:
+    html, fetch_meta = get_home_html(url)
+    result = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
+    result.update(fetch_meta)
+
+    if fetch_meta.get("error") or not html:
+        return result
+
+    soup = parse_html(html)
+    base_domain = extract_domain(result.get("_final_url") or url)
+
+    # Title & meta
+    title_tag = soup.find("title")
+    title = (title_tag.get_text(strip=True) if title_tag else None) or ""
+    title_len = len(title)
+    meta_desc = find_meta_tag(soup, name="description") or ""
+    meta_desc_len = len(meta_desc)
+
+    # H1
+    h1s = [h.get_text(strip=True) for h in soup.find_all("h1")]
+    h1_count = len(h1s)
+
+    # Canonical
+    canonical = None
+    link_canon = soup.find("link", rel=lambda v: v and "canonical" in v)
+    if link_canon is not None and link_canon.get("href"):
+        canonical = link_canon["href"].strip()
+
+    # Social & schema
+    og_title = find_meta_tag(soup, prop="og:title")
+    og_desc = find_meta_tag(soup, prop="og:description")
+    tw_title = find_meta_tag(soup, name="twitter:title")
+    tw_desc = find_meta_tag(soup, name="twitter:description")
+    schema_jsonld = has_json_ld(soup)
+
+    # Content quality & structure
+    visible_text = visible_text_from_soup(soup)
+    fre = flesch_reading_ease(visible_text)
+    orig = originality_heuristic(visible_text)
+    tone = tone_heuristic(visible_text)
+    headings_meta = heading_audit(soup)
+    anchor_q = internal_anchor_quality(soup, base_domain)
+    js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
+
+    # Links
+    a_tags = soup.find_all("a")
+    internal = 0
+    external = 0
+    for a in a_tags:
+        href = a.get("href") or ""
+        if is_internal(href, base_domain):
+            internal += 1
+        elif href.startswith("http://") or href.startswith("https://"):
+            external += 1
+
+    # Images
+    imgs = soup.find_all("img")
+    img_count = len(imgs)
+    img_alt_with = sum(1 for im in imgs if (im.get("alt") or "").strip())
+    img_alt_ratio = (img_alt_with / img_count) if img_count else 1.0
+
+    # Robots & Sitemap
+    robots = get_robots_txt(url)
+    sitemap_present = has_sitemap(url, robots.get("sitemaps", []))
+
+    # Mobile meta viewport & robots meta
+    viewport = soup.find("meta", attrs={"name": "viewport"}) is not None
+    robots_meta = find_meta_tag(soup, name="robots") or ""
+    is_noindex = "noindex" in robots_meta.lower()
+
+    # Performance / PSI (optional)
+    cwv = {}
+    psi_scores = {}
+    psi_key = os.environ.get("PSI_API_KEY")
+    try:
+        if psi_key:
+            psi_url = (
+                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+                f"?url={requests.utils.quote(result.get('_final_url') or url, safe='')}"
+                f"&key={psi_key}&category=performance&category=seo&category=accessibility&category=pwa&strategy=mobile"
+            )
+            r, err = http_get(psi_url)
+            if r and r.status_code == 200:
+                data = r.json()
+                lh = data.get("lighthouseResult", {})
+                cats = lh.get("categories", {})
+                for k, v in cats.items():
+                    if isinstance(v, dict) and "score" in v and v["score"] is not None:
+                        psi_scores[k] = round(float(v["score"]) * 100)
+                metrics = data.get("loadingExperience", {}).get("metrics", {})
+
+                def pct_good(key):
+                    m = metrics.get(key, {})
+                    d = m.get("distributions", [])
+                    good = next((x for x in d if x.get("min") == 0), None)
+                    return int(round((good.get("proportion", 0) * 100))) if good else None
+
+                cwv = {
+                    "LCP_ms": (lh.get("audits", {}).get("largest-contentful-paint", {}).get("numericValue")),
+                    "CLS": (lh.get("audits", {}).get("cumulative-layout-shift", {}).get("numericValue")),
+                    "INP_ms": (lh.get("audits", {}).get("interaction-to-next-paint", {}).get("numericValue")),
+                    "GOOD_LCP_%": pct_good("LARGEST_CONTENTFUL_PAINT_MS"),
+                    "GOOD_CLS_%": pct_good("CUMULATIVE_LAYOUT_SHIFT"),
+                    "GOOD_INP_%": pct_good("INTERACTION_TO_NEXT_PAINT"),
+                }
+    except Exception:
+        pass
+
+    result.update({
+        "title": title,
+        "title_len": title_len,
+        "meta_desc_len": meta_desc_len,
+        "h1_count": h1_count,
+        "canonical": canonical or "",
+        "og_present": bool(og_title or og_desc),
+        "twitter_present": bool(tw_title or tw_desc),
+        "schema_jsonld": schema_jsonld,
+        "internal_links": internal,
+        "external_links": external,
+        "images": img_count,
+        "img_alt_ratio": round(img_alt_ratio, 3),
+        "robots_exists": robots.get("exists", False),
+        "sitemap_exists": sitemap_present,
+        "viewport_meta": viewport,
+        "noindex": is_noindex,
+        "psi_scores": psi_scores,
+        "cwv": cwv,
+        "readability_fre": None if fre is None else round(fre, 1),
+        "originality": orig,
+        "tone": tone,
+        "headings": headings_meta,
+        "anchor_quality": anchor_q,
+        "js_reliance": js_meta,
+    })
+
+    result.update(compute_scores(result))
+
+    # Generate recommendations and issue count
+    recs = generate_recommendations(result)
+    result["_recommendations"] = recs
+    result["_issue_count"] = len(recs)
+    return result
+
 # ----------------------------- UI -----------------------------
 
 st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide")
 
 st.title("🔎 SEO Audit & Competitor Comparator")
-st.caption("Audits your homepage for on-page + technical basics, pulls optional Core Web Vitals via PageSpeed Insights, and compares against competitors.")
+st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, compares against competitors, and now suggests fixes.")
 
 with st.sidebar:
     st.header("Settings")
@@ -668,6 +716,7 @@ if run_btn and default_domain:
             "Perf": r.get("score_performance"),
             "Social": r.get("score_social"),
             "Overall": r.get("overall_score"),
+            "Issues": r.get("_issue_count"),
             "Error": r.get("error"),
         }
 
@@ -778,6 +827,14 @@ if run_btn and default_domain:
                     st.markdown("**Core Web Vitals (mobile)**")
                     st.write(r.get("cwv"))
 
+            st.markdown("**Recommendations**")
+            recs = r.get("_recommendations", [])
+            if recs:
+                for m in recs:
+                    st.write("• ", m)
+            else:
+                st.write("No critical issues detected. Nice!")
+
     # ----- Downloads -----
     st.subheader("Export")
     json_blob = json.dumps(results, indent=2)
@@ -788,14 +845,14 @@ if run_btn and default_domain:
     csv_buf = io.StringIO()
     writer = csv.writer(csv_buf)
     header = [
-        "domain", "final_url", "overall", "title", "title_len", "meta_desc_len", "h1_count", "internal", "external", "img_alt_ratio", "tech", "perf", "social", "status", "load_ms", "page_bytes",
+        "domain", "final_url", "overall", "title", "title_len", "meta_desc_len", "h1_count", "internal", "external", "img_alt_ratio", "tech", "perf", "social", "status", "load_ms", "page_bytes", "issues",
     ]
     writer.writerow(header)
     for r in results:
         writer.writerow([
             r.get("_domain"), r.get("_final_url"), r.get("overall_score"), r.get("title"), r.get("title_len"), r.get("meta_desc_len"),
             r.get("h1_count"), r.get("internal_links"), r.get("external_links"), r.get("img_alt_ratio"), r.get("score_tech"),
-            r.get("score_performance"), r.get("score_social"), r.get("status_code"), r.get("elapsed_ms"), r.get("page_bytes"),
+            r.get("score_performance"), r.get("score_social"), r.get("status_code"), r.get("elapsed_ms"), r.get("page_bytes"), r.get("_issue_count"),
         ])
     st.download_button("Download CSV", data=csv_buf.getvalue(), file_name="seo_audit_results.csv", mime="text/csv")
 
@@ -803,6 +860,5 @@ else:
     st.info("Enter your domain and any competitors, then click **Run audit**.")
 
 # ----------------------------- Notes -----------------------------
-# This is a lightweight checker focused on homepage-level signals. For crawling, duplicate content, JS-rendered content,
-# and deeper issues, integrate with a crawler (e.g., Screaming Frog API) or run this from a headless browser (Playwright/Puppeteer)
-# to capture rendered DOM and network requests. The PSI integration is optional and requires an API key.
+# This is a lightweight checker focused on homepage-level signals. For crawling and JS-rendered content at scale,
+# integrate with a crawler or a headless browser. PSI integration is optional and requires an API key.
