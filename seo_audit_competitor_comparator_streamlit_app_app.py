@@ -734,6 +734,7 @@ if run_btn and default_domain:
                     "Meta desc length": r.get("meta_desc_len"),
                     "H1 count": r.get("h1_count"),
                     "Canonical": r.get("canonical"),
+                 })
                 st.markdown("**Content Quality**")
                 st.write({
                     "Flesch Reading Ease": r.get("readability_fre"),
