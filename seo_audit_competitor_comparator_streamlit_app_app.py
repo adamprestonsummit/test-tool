@@ -754,20 +754,20 @@ if run_btn and default_domain:
             st.write(r.get("js_reliance"))
 
                 })
-                st.markdown("**Content Stats**")
-                st.write({
+            st.markdown("**Content Stats**")
+            st.write({
                     "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
                     "Images": r.get("images"),
                     "Alt ratio": r.get("img_alt_ratio"),
                 })
             with col2:
-                st.markdown("**Robots/Sitemap**")
-                st.write({
+            st.markdown("**Robots/Sitemap**")
+            st.write({
                     "robots.txt": r.get("robots_exists"),
                     "sitemap": r.get("sitemap_exists"),
                 })
-                st.markdown("**Social/Schema**")
-                st.write({
+            st.markdown("**Social/Schema**")
+            st.write({
                     "Open Graph": r.get("og_present"),
                     "Twitter Cards": r.get("twitter_present"),
                     "JSON-LD schema": r.get("schema_jsonld"),
