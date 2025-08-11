@@ -734,7 +734,7 @@ if run_btn and default_domain:
                     "Meta desc length": r.get("meta_desc_len"),
                     "H1 count": r.get("h1_count"),
                     "Canonical": r.get("canonical"),
-                 })
+                })
                 st.markdown("**Content Quality**")
                 st.write({
                     "Flesch Reading Ease": r.get("readability_fre"),
@@ -743,17 +743,6 @@ if run_btn and default_domain:
                     "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
                     "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
                 })
-
-                st.markdown("**Headings**")
-                st.write(r.get("headings"))
-
-                st.markdown("**Internal Link Anchors**")
-                st.write(r.get("anchor_quality"))
-
-                st.markdown("**JS Reliance**")
-                st.write(r.get("js_reliance"))
-
-                })
                 st.markdown("**Content Stats**")
                 st.write({
                     "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
@@ -761,13 +750,19 @@ if run_btn and default_domain:
                     "Alt ratio": r.get("img_alt_ratio"),
                 })
             with col2:
-            st.markdown("**Robots/Sitemap**")
-            st.write({
+                st.markdown("**Headings**")
+                st.write(r.get("headings"))
+                st.markdown("**Internal Link Anchors**")
+                st.write(r.get("anchor_quality"))
+                st.markdown("**JS Reliance**")
+                st.write(r.get("js_reliance"))
+                st.markdown("**Robots/Sitemap**")
+                st.write({
                     "robots.txt": r.get("robots_exists"),
                     "sitemap": r.get("sitemap_exists"),
                 })
-            st.markdown("**Social/Schema**")
-            st.write({
+                st.markdown("**Social/Schema**")
+                st.write({
                     "Open Graph": r.get("og_present"),
                     "Twitter Cards": r.get("twitter_present"),
                     "JSON-LD schema": r.get("schema_jsonld"),
@@ -778,6 +773,7 @@ if run_btn and default_domain:
                 if r.get("cwv"):
                     st.markdown("**Core Web Vitals (mobile)**")
                     st.write(r.get("cwv"))
+
 
     # ----- Downloads -----
     st.subheader("Export")
