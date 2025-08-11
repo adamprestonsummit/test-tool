@@ -670,23 +670,23 @@ if run_btn and default_domain:
 
     # ----- Radar chart of category scores -----
     st.subheader("Category Radar")
-   cats = [
-    ("Title", "score_title"),
-    ("Meta", "score_meta_desc"),
-    ("H1", "score_h1"),
-    ("Links", "score_links"),
-    ("Alt", "score_images_alt"),
-    ("Tech", "score_tech"),
-    ("Social", "score_social"),
-    ("Perf", "score_performance"),
+       cats = [
+        ("Title", "score_title"),
+        ("Meta", "score_meta_desc"),
+        ("H1", "score_h1"),
+        ("Links", "score_links"),
+        ("Alt", "score_images_alt"),
+        ("Tech", "score_tech"),
+        ("Social", "score_social"),
+        ("Perf", "score_performance"),
     # NEW
-    ("Readability", "score_readability"),
-    ("Originality", "score_originality"),
-    ("Tone", "score_tone"),
-    ("Headings", "score_heading_structure"),
-    ("Anchors", "score_anchor_quality"),
-    ("JS Reliance", "score_js"),
-]
+        ("Readability", "score_readability"),
+        ("Originality", "score_originality"),
+        ("Tone", "score_tone"),
+        ("Headings", "score_heading_structure"),
+        ("Anchors", "score_anchor_quality"),
+        ("JS Reliance", "score_js"),
+    ]
 
     fig = go.Figure()
     theta = [c[0] for c in cats]
