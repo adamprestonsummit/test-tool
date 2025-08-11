@@ -753,7 +753,7 @@ if run_btn and default_domain:
             st.markdown("**JS Reliance**")
             st.write(r.get("js_reliance"))
 
-                })
+            })
             st.markdown("**Content Stats**")
             st.write({
                     "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
