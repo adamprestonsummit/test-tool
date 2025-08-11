@@ -744,18 +744,18 @@ if run_btn and default_domain:
                     "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
                 })
 
-            st.markdown("**Headings**")
-            st.write(r.get("headings"))
+                st.markdown("**Headings**")
+                st.write(r.get("headings"))
 
-            st.markdown("**Internal Link Anchors**")
-            st.write(r.get("anchor_quality"))
+                st.markdown("**Internal Link Anchors**")
+                st.write(r.get("anchor_quality"))
 
-            st.markdown("**JS Reliance**")
-            st.write(r.get("js_reliance"))
+                st.markdown("**JS Reliance**")
+                st.write(r.get("js_reliance"))
 
-            })
-            st.markdown("**Content Stats**")
-            st.write({
+                })
+                st.markdown("**Content Stats**")
+                st.write({
                     "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
                     "Images": r.get("images"),
                     "Alt ratio": r.get("img_alt_ratio"),
