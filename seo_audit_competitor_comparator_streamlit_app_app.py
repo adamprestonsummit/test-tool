@@ -207,13 +207,13 @@ def analyze_page(url: str) -> Dict:
     schema_jsonld = has_json_ld(soup)
 
     # Content quality & structure
-visible_text = visible_text_from_soup(soup)
-fre = flesch_reading_ease(visible_text)
-orig = originality_heuristic(visible_text)
-tone = tone_heuristic(visible_text)
-headings_meta = heading_audit(soup)
-anchor_q = internal_anchor_quality(soup, base_domain)
-js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
+    visible_text = visible_text_from_soup(soup)
+    fre = flesch_reading_ease(visible_text)
+    orig = originality_heuristic(visible_text)
+    tone = tone_heuristic(visible_text)
+    headings_meta = heading_audit(soup)
+    anchor_q = internal_anchor_quality(soup, base_domain)
+    js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
 
 
     # Links
