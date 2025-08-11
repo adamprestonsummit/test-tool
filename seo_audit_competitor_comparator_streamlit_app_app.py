@@ -670,7 +670,7 @@ if run_btn and default_domain:
 
     # ----- Radar chart of category scores -----
     st.subheader("Category Radar")
-       cats = [
+    cats = [
         ("Title", "score_title"),
         ("Meta", "score_meta_desc"),
         ("H1", "score_h1"),
