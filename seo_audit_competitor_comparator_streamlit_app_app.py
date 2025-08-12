@@ -1302,13 +1302,13 @@ if run_btn and default_domain:
 
     colA, colB = st.columns(2)
     with colA:
-        st.write({"Backlinks (domain)": sm.get("backlinks_domain")})
-        st.write({"Ref domains (domain)": sm.get("refdomains_domain_count")})
-        st.write({"Backlinks (URL)": sm.get("backlinks_url")})
-        st.write({"Ref domains (URL)": sm.get("refdomains_url_count")})
+        st.write({"Backlinks (domain)": semrush.get("backlinks_domain")})
+        st.write({"Ref domains (domain)": semrush.get("refdomains_domain_count")})
+        st.write({"Backlinks (URL)": semrush.get("backlinks_url")})
+        st.write({"Ref domains (URL)": semrush.get("refdomains_url_count")})
 
     with colB:
-        dom = sm.get("domain_organic_uk") or {}
+        dom = semrush.get("domain_organic_uk") or {}
         st.write({
             "UK Organic keywords": dom.get("Or"),
             "UK Organic traffic": dom.get("Ot"),
@@ -1316,7 +1316,7 @@ if run_btn and default_domain:
             "YoY % (KW/Traffic)": (dom.get("Or_yoy_%"), dom.get("Ot_yoy_%")),
             "Periods (this/mom/yoy)": dom.get("_dates"),
         })
-        st.write({"URL UK Keyword count (approx)": sm.get("url_keywords_uk")})
+        st.write({"URL UK Keyword count (approx)": semrush.get("url_keywords_uk")})
 
     if r.get("keyword_research"):
         st.markdown("**AI Keyword Research + Volumes (UK)**")
