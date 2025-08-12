@@ -1026,6 +1026,7 @@ st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide"
 st.title("🔎 SEO Audit & Competitor Comparator")
 st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, competitor comparison, and optional Gemini AI for semantic checks.")
 
+# --- Sidebar (define ALL inputs first) ---
 with st.sidebar:
     st.header("Settings")
     default_domain = st.text_input(
@@ -1050,7 +1051,7 @@ with st.sidebar:
     if use_semrush and not _get_semrush_key():
         st.warning("No SEMRUSH_API_KEY found in Secrets.")
 
-    # Place the run button LAST in the sidebar
+    # IMPORTANT: define the button LAST, right here
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
 
     st.divider()
@@ -1058,71 +1059,68 @@ with st.sidebar:
     st.write("Set environment var `PSI_API_KEY` before running for Core Web Vitals + Lighthouse scores.")
 
 
+
+# --- Main trigger (must be BELOW the sidebar block) ---
 if run_btn and default_domain:
-    # build targets and run the audit
+    # Build targets list
     targets = [normalize_url(default_domain)]
     for line in (competitors or "").splitlines():
         line = line.strip()
         if line:
             targets.append(normalize_url(line))
 
-    # later when you call analyze_page:
-    res = analyze_page(
-        t,
-        use_ai=use_ai,
-        topic_hint=topic_hint,
-        show_ai_debug=show_ai_debug,
-    )
-
-    # Semrush extras
-    if use_semrush:
-        # ... your Semrush calls and res["semrush"] assignment ...
-
-
     st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
 
     results: List[Dict[str, Any]] = []
-
     progress = st.progress(0.0)
     status = st.empty()
 
-    for i, t in enumerate(targets, 1):
+    for i, t in enumerate(targets, start=1):
         status.write(f"Fetching: {t}")
-        res = analyze_page(t, use_ai=use_ai, topic_hint=topic_hint)
+
+        # Core page analysis (includes AI if enabled)
+        res = analyze_page(
+            t,
+            use_ai=use_ai,
+            topic_hint=topic_hint,
+            show_ai_debug=show_ai_debug,
+        )
+
+        # Semrush extras (optional)
         if use_semrush:
             domain = res.get("_domain")
             final_url = res.get("_final_url") or res.get("_url")
 
-    # Backlinks
-    bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
-    bl_url = semrush_backlinks_overview(final_url, "url") or {}
-    # (Optional extra count via refdomains list)
-    rd_dom_count = semrush_refdomains_count(domain, "root_domain")
-    rd_url_count = semrush_refdomains_count(final_url, "url")
+            # Backlinks & ref domains
+            bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
+            bl_url = semrush_backlinks_overview(final_url, "url") or {}
+            rd_dom_count = semrush_refdomains_count(domain, "root_domain")
+            rd_url_count = semrush_refdomains_count(final_url, "url")
 
-    # Domain organic MoM/YoY (UK)
-    dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
+            # Domain organic metrics (UK) with MoM/YoY deltas
+            dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
 
-    # URL-level organic keyword count (rough)
-    url_kw_count = semrush_url_keywords_count(final_url, "uk")
+            # URL-level keyword count (UK)
+            url_kw_count = semrush_url_keywords_count(final_url, "uk")
 
-    res["semrush"] = {
-        "backlinks_domain": bl_dom,
-        "backlinks_url": bl_url,
-        "refdomains_domain_count": rd_dom_count,
-        "refdomains_url_count": rd_url_count,
-        "domain_organic_uk": dom_ov,
-        "url_keywords_uk": url_kw_count,
-    }
+            res["semrush"] = {
+                "backlinks_domain": bl_dom,
+                "backlinks_url": bl_url,
+                "refdomains_domain_count": rd_dom_count,
+                "refdomains_url_count": rd_url_count,
+                "domain_organic_uk": dom_ov,
+                "url_keywords_uk": url_kw_count,
+            }
 
-    # Optional: AI → Semrush keyword volumes
-    if topic_hint:
-        res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
+            # AI → Semrush volumes for suggested keywords (if you provided a hint)
+            if topic_hint:
+                res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
 
         results.append(res)
         progress.progress(i / len(targets))
 
     status.write("Done.")
+    # ↓ Keep your Summary / Radar / Details / Downloads sections after this
 
     # ----- Summary Table -----
     st.subheader("Summary")
