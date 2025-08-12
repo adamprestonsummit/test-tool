@@ -835,19 +835,13 @@ with st.sidebar:
     st.header("Settings")
     default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
     competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
-    st.subheader("AI (optional)")
-    use_ai = st.checkbox("Run AI analysis (Gemini)")
-    topic_hint = st.text_input("Topic/intent hint (optional)")
-    if use_ai and not _GENAI_AVAILABLE:
-        st.warning("google-generativeai not installed. Run: pip install google-generativeai")
-    if use_ai and not _get_gemini_key():
-        st.info("Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI analysis.")
-    run_btn = st.button("Run audit", type="primary")
-    st.divider()
+    
     st.subheader("AI Analysis")
+    show_ai_debug = st.checkbox("Show AI debug", value=False, key="ai_debug")
     provider   = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
     use_ai     = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
+
 
 # Optional: run button with a key too (avoids clashes if there's another button elsewhere)
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
