@@ -5,3 +5,5 @@ lxml
 tldextract
 plotly
 python-dateutil
+google-generativeai
+
