@@ -1298,6 +1298,21 @@ for r in results:
                 "Alt ratio": r.get("img_alt_ratio"),
             })
 
+            # SEMRUSH data
+            sm = r.get("semrush", {})
+            if sm:
+                st.markdown("**Semrush Metrics**")
+                st.write({
+                    "Backlinks (Domain)": sm.get("backlinks_domain", {}).get("backlinks", "N/A"),
+                    "Backlinks (URL)": sm.get("backlinks_url", {}).get("backlinks", "N/A"),
+                    "Ref Domains (Domain)": sm.get("refdomains_domain_count", "N/A"),
+                    "Ref Domains (URL)": sm.get("refdomains_url_count", "N/A"),
+                    "Organic Traffic UK": sm.get("domain_organic_uk", {}).get("traffic", "N/A"),
+                    "MoM Change UK": sm.get("domain_organic_uk", {}).get("mom_change", "N/A"),
+                    "YoY Change UK": sm.get("domain_organic_uk", {}).get("yoy_change", "N/A"),
+                    "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
+                })
+
         with col2:
             st.markdown("**Headings**")
             st.write(r.get("headings"))
@@ -1323,6 +1338,7 @@ for r in results:
                 st.markdown("**Core Web Vitals (mobile)**")
                 st.write(r.get("cwv"))
 
+        # AI analysis findings
         if r.get("ai_scores"):
             st.markdown("**AI Analysis**")
             st.write(r.get("ai_scores"))
@@ -1341,6 +1357,7 @@ for r in results:
         elif r.get("_ai_error"):
             st.info(f"AI note: {r['_ai_error']}")
 
+        # Recommendations
         st.markdown("**Recommendations**")
         recs = r.get("_recommendations", [])
         if recs:
@@ -1349,9 +1366,11 @@ for r in results:
         else:
             st.write("No critical issues detected. Nice!")
 
+        # Keyword research results
         if r.get("keyword_research"):
             st.markdown("**AI Keyword Research + Volumes (UK)**")
             st.dataframe(r["keyword_research"], use_container_width=True)
+
 
 
      # ----- Downloads -----
