@@ -1265,7 +1265,7 @@ for r in results:
         vals = [r.get(c[1], 0) for c in cats]
         fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
         fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True)
 
     # ----- Overall score bar chart -----
     st.subheader("Overall Score Comparison")
