@@ -183,61 +183,93 @@ def _get_gemini_key() -> Optional[str]:
     return None
 
 
-def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, timeout: int = 40) -> Optional[Dict[str, Any]]:
-    """Call Gemini and return dict with ai_scores & ai_findings. Returns None on failure or if SDK/API key missing."""
+def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30) -> Optional[Dict[str, Any]]:
+    """
+    Calls the Gemini REST API directly, returns a structured dict with ai_scores & ai_findings.
+    Requires env var GEMINI_API_KEY or GOOGLE_API_KEY. Returns None on failure.
+    """
     api_key = _get_gemini_key()
-    if not api_key or not _GENAI_AVAILABLE:
+    if not api_key:
         return None
-    try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.0-pro")  # works broadly; update if you have 2.5
-        # Trim text for token/cost. Consider chunking for very long pages.
-        text = page_text.strip()
-        if len(text) > 20000:
-            text = text[:20000]
-        schema_hint = {
-            "ai_scores": {
-                "intent_match": 0,
-                "topical_coverage": 0,
-                "eeat": 0,
-                "helpfulness": 0,
-                "originality_judgement": 0,
-                "tone_fit": 0,
-                "conversion_copy": 0,
-                "internal_link_opps": 0,
-            },
-            "ai_findings": {
-                "missing_subtopics": [],
-                "weak_sections": [],
-                "entities_detected": [],
-                "schema_recommendations": [],
-                "faq_suggestions": [],
-                "internal_link_suggestions": [],
-                "copy_suggestions": [],
-            },
+
+    text = page_text.strip()
+    if len(text) > 20000:
+        text = text[:20000]  # trim to avoid huge payload
+
+    schema_hint = {
+        "ai_scores": {
+            "intent_match": 0,
+            "topical_coverage": 0,
+            "eeat": 0,
+            "helpfulness": 0,
+            "originality_judgement": 0,
+            "tone_fit": 0,
+            "conversion_copy": 0,
+            "internal_link_opps": 0
+        },
+        "ai_findings": {
+            "missing_subtopics": [],
+            "weak_sections": [],
+            "entities_detected": [],
+            "schema_recommendations": [],
+            "faq_suggestions": [],
+            "internal_link_suggestions": [],
+            "copy_suggestions": []
         }
-        prompt = (
-            "You are an SEO content analyst. Evaluate the following visible page copy and return ONLY JSON matching this schema. "
-            "Do not include commentary or code fences.\n\n"
-            + json.dumps(schema_hint)
-            + "\n\nBusiness/topic hint: "
-            + (topic_hint or "(none)")
-            + "\nText to analyze: <<<\n"
-            + text
-            + "\n>>>\n"
-            + "Scoring rubric: intent_match, topical_coverage, eeat, helpfulness, originality_judgement, tone_fit, conversion_copy, internal_link_opps (0–100 each)."
-        )
-        resp = model.generate_content(prompt, generation_config={"temperature": 0.2})
-        out = resp.text or "{}"
-        out = out.strip()
-        # Attempt to recover JSON if the model added fences by accident
-        if out.startswith("```"):
-            out = re.sub(r"^```(?:json)?|```$", "", out, flags=re.MULTILINE).strip()
+    }
+
+    system_instructions = (
+        "You are an SEO content analyst. Evaluate the webpage copy and return ONLY valid JSON "
+        "with ai_scores and ai_findings."
+    )
+
+    user_prompt = f"""
+Return ONLY compact JSON matching this schema (no prose):\n{json.dumps(schema_hint)}\n
+Business/topic hint (optional): {topic_hint or "(none)"}\n
+Text to analyze:\n<<<\n{text}\n>>>\n
+Scoring rubric:\n
+- intent_match: How well the page satisfies likely user intent (0–100)\n
+- topical_coverage: Coverage of must-have subtopics with useful detail (0–100)\n
+- eeat: Expertise/Experience/Authoritativeness/Trust signals present (0–100)\n
+- helpfulness: Clear, actionable, evidence-based (0–100)\n
+- originality_judgement: Non-boilerplate, unique POV (0–100)\n
+- tone_fit: On-brand, non-hypey (0–100)\n
+- conversion_copy: Value prop clarity, CTA, proof (0–100)\n
+- internal_link_opps: Quantity & quality of obvious internal link opps present (0–100)\n
+Return JSON only.
+    """
+
+    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-pro:generateContent"
+    headers = {"Content-Type": "application/json"}
+    body = {
+        "contents": [
+            {"role": "user", "parts": [{"text": system_instructions + "\n\n" + user_prompt}]}
+        ],
+        "generationConfig": {"temperature": 0.2}
+    }
+
+    try:
+        resp = requests.post(endpoint, params={"key": api_key}, headers=headers, json=body, timeout=timeout)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            return None
+        parts = ((candidates[0] or {}).get("content") or {}).get("parts") or []
+        text = "".join([p.get("text", "") for p in parts]).strip()
+
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
+
         try:
-            return json.loads(out)
+            return json.loads(text)
         except Exception:
-            m = re.search(r"\{[\s\S]*\}$", out)
-            return json.loads(m.group(0)) if m else None
+            match = re.search(r"\{[\s\S]*\}$", text)
+            if match:
+                return json.loads(match.group(0))
+            return None
+
     except Exception:
         return None
 
