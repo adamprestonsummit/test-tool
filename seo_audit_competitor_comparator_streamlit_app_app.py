@@ -175,6 +175,12 @@ def has_sitemap(domain_url: str, hinted_sitemaps: List[str]) -> bool:
 
 # ----------------------------- AI (Gemini) Helpers -----------------------------
 
+def _get_openai_key() -> str | None:
+    return (
+        os.environ.get("OPENAI_API_KEY")
+        or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None)
+    )
+
 def _get_gemini_key() -> Optional[str]:
     # Prefer env vars if set, else fall back to Streamlit secrets
     return (
@@ -185,18 +191,18 @@ def _get_gemini_key() -> Optional[str]:
     )
 
 
-def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30) -> Optional[Dict[str, Any]]:
+def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30) -> Optional[Dict[str, Any]]:
     """
-    Calls the Gemini REST API directly, returns a structured dict with ai_scores & ai_findings.
-    Requires env var GEMINI_API_KEY or GOOGLE_API_KEY. Returns None on failure.
+    Calls OpenAI Responses API and returns a dict with ai_scores & ai_findings.
+    Requires OPENAI_API_KEY. Returns None on failure.
     """
-    api_key = _get_gemini_key()
+    api_key = _get_openai_key()
     if not api_key:
         return None
 
-    text = page_text.strip()
+    text = (page_text or "").strip()
     if len(text) > 20000:
-        text = text[:20000]  # trim to avoid huge payload
+        text = text[:20000]  # trim cost/latency
 
     schema_hint = {
         "ai_scores": {
@@ -220,58 +226,64 @@ def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, tim
         }
     }
 
-    system_instructions = (
+    system_text = (
         "You are an SEO content analyst. Evaluate the webpage copy and return ONLY valid JSON "
-        "with ai_scores and ai_findings."
+        "with ai_scores and ai_findings matching the provided schema."
     )
 
-    user_prompt = f"""
-Return ONLY compact JSON matching this schema (no prose):\n{json.dumps(schema_hint)}\n
-Business/topic hint (optional): {topic_hint or "(none)"}\n
-Text to analyze:\n<<<\n{text}\n>>>\n
-Scoring rubric:\n
-- intent_match: How well the page satisfies likely user intent (0–100)\n
-- topical_coverage: Coverage of must-have subtopics with useful detail (0–100)\n
-- eeat: Expertise/Experience/Authoritativeness/Trust signals present (0–100)\n
-- helpfulness: Clear, actionable, evidence-based (0–100)\n
-- originality_judgement: Non-boilerplate, unique POV (0–100)\n
-- tone_fit: On-brand, non-hypey (0–100)\n
-- conversion_copy: Value prop clarity, CTA, proof (0–100)\n
-- internal_link_opps: Quantity & quality of obvious internal link opps present (0–100)\n
-Return JSON only.
-    """
+    user_prompt = (
+        "Return ONLY compact JSON matching this schema (no prose):\n"
+        f"{json.dumps(schema_hint)}\n\n"
+        f"Business/topic hint (optional): {topic_hint or '(none)'}\n"
+        "Text to analyze:\n<<<\n"
+        f"{text}\n>>>\n\n"
+        "Scoring rubric:\n"
+        "- intent_match, topical_coverage, eeat, helpfulness, originality_judgement,\n"
+        "- tone_fit, conversion_copy, internal_link_opps (0–100 each).\n"
+        "Return JSON only."
+    )
 
-    endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-pro:generateContent"
-    headers = {"Content-Type": "application/json"}
+    endpoint = "https://api.openai.com/v1/responses"  # Responses API
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
     body = {
-        "contents": [
-            {"role": "user", "parts": [{"text": system_instructions + "\n\n" + user_prompt}]}
+        "model": "gpt-4o-mini",  # good cost/latency tradeoff
+        "input": [
+            {"role": "system", "content": [{"type": "text", "text": system_text}]},
+            {"role": "user",   "content": [{"type": "text", "text": user_prompt}]},
         ],
-        "generationConfig": {"temperature": 0.2}
+        "temperature": 0.2,
     }
 
     try:
-        resp = requests.post(endpoint, params={"key": api_key}, headers=headers, json=body, timeout=timeout)
+        resp = requests.post(endpoint, headers=headers, json=body, timeout=timeout)
         if resp.status_code != 200:
+            # Optional: surface error text while testing
+            # st.write("OpenAI error:", resp.status_code, resp.text[:400])
             return None
         data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            return None
-        parts = ((candidates[0] or {}).get("content") or {}).get("parts") or []
-        text = "".join([p.get("text", "") for p in parts]).strip()
 
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?|```$", "", text, flags=re.MULTILINE).strip()
-
-        try:
-            return json.loads(text)
-        except Exception:
-            match = re.search(r"\{[\s\S]*\}$", text)
-            if match:
-                return json.loads(match.group(0))
+        # The Responses API often includes a convenience "output_text".
+        out_text = data.get("output_text")
+        if not out_text:
+            # Fallback: dig into output array if needed
+            # (structure can vary; this handles typical shapes)
+            output = data.get("output") or []
+            if output and isinstance(output, list):
+                parts = output[0].get("content") or []
+                if parts and isinstance(parts, list):
+                    out_text = "".join(p.get("text", "") for p in parts)
+        if not out_text:
             return None
 
+        out_text = out_text.strip()
+        # Strip accidental code fences
+        if out_text.startswith("```"):
+            out_text = re.sub(r"^```(?:json)?|```$", "", out_text, flags=re.MULTILINE).strip()
+
+        return json.loads(out_text)
     except Exception:
         return None
 
@@ -818,12 +830,12 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = Non
 
        # AI analysis (optional)
     if use_ai:
-        ai = ai_analyze_with_gemini(visible_text, topic_hint)
-        if ai:
-            result["ai_scores"] = ai.get("ai_scores")
-            result["ai_findings"] = ai.get("ai_findings")
-        else:
-            result["_ai_error"] = "Gemini returned no result (check key/quotas)."
+    ai = ai_analyze_with_openai(visible_text, topic_hint)
+    if ai:
+        result["ai_scores"] = ai.get("ai_scores")
+        result["ai_findings"] = ai.get("ai_findings")
+    else:
+        result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
 
     # Compute sub-scores & overall
     result.update(compute_scores(result))
@@ -855,6 +867,10 @@ with st.sidebar:
         st.info("Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI analysis.")
     run_btn = st.button("Run audit", type="primary")
     st.divider()
+     st.subheader("AI Analysis")
+    provider = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0)
+    use_ai = provider != "Off"
+    topic_hint = st.text_input("Topic/intent hint (optional)")
     st.subheader("Google PSI API (optional)")
     st.write("Set environment var `PSI_API_KEY` before running for Core Web Vitals + Lighthouse scores.")
   
