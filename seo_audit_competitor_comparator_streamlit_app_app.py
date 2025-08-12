@@ -1058,7 +1058,6 @@ if run_btn and default_domain:
 
 else:
     st.info("Enter your domain and any competitors, choose AI if desired, then click **Run audit**.")
-```
 
 
 # ----------------------------- Notes -----------------------------
