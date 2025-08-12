@@ -816,15 +816,14 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = Non
         "js_reliance": js_meta,
     })
 
-    # AI analysis (optional)
-if use_ai:
-    ai = ai_analyze_with_gemini(visible_text, topic_hint)
-    if ai:
-        result["ai_scores"] = ai.get("ai_scores")
-        result["ai_findings"] = ai.get("ai_findings")
-    else:
-        # Optional: surface a debug message while you're testing
-        result["_ai_error"] = "Gemini returned no result (check key/quotas)."
+       # AI analysis (optional)
+    if use_ai:
+        ai = ai_analyze_with_gemini(visible_text, topic_hint)
+        if ai:
+            result["ai_scores"] = ai.get("ai_scores")
+            result["ai_findings"] = ai.get("ai_findings")
+        else:
+            result["_ai_error"] = "Gemini returned no result (check key/quotas)."
 
     # Compute sub-scores & overall
     result.update(compute_scores(result))
@@ -833,6 +832,7 @@ if use_ai:
     recs = generate_recommendations(result)
     result["_recommendations"] = recs
     result["_issue_count"] = len(recs)
+
     return result
 
 # ----------------------------- UI -----------------------------
