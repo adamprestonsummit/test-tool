@@ -263,6 +263,140 @@ def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, tim
         if debug: st.write("DEBUG exception:", repr(e))
         return None
 
+# ---------- Semrush helpers ----------
+import csv
+import io
+from datetime import date, timedelta
+
+def _get_semrush_key() -> str | None:
+    return (
+        os.environ.get("SEMRUSH_API_KEY")
+        or (st.secrets.get("SEMRUSH_API_KEY") if hasattr(st, "secrets") else None)
+    )
+
+SEMRUSH_BASE = "https://api.semrush.com/"
+
+def semrush_get(report_type: str, params: dict, timeout: int = 30) -> list[dict] | None:
+    """
+    Generic Semrush fetcher. Returns a list of dict rows (CSV → dict).
+    """
+    api_key = _get_semrush_key()
+    if not api_key:
+        return None
+    q = {"type": report_type, "key": api_key, **params}
+    try:
+        r = requests.get(SEMRUSH_BASE, params=q, timeout=timeout)
+        if r.status_code != 200 or not r.text or "ERROR" in r.text[:30].upper():
+            return None
+        # Semrush returns CSV
+        buf = io.StringIO(r.text)
+        rows = list(csv.DictReader(buf))
+        return rows
+    except Exception:
+        return None
+
+def last_full_month_anchor(today: date | None = None) -> date:
+    d = today or date.today()
+    first_this = d.replace(day=1)
+    return (first_this - timedelta(days=1)).replace(day=1)  # first day of last full month
+
+def months_ago(anchor: date, n: int) -> date:
+    y = anchor.year + (anchor.month - 1 - n) // 12
+    m = (anchor.month - 1 - n) % 12 + 1
+    return date(y, m, 1)
+
+# ---------- Specific wrappers (common reports) ----------
+
+def semrush_backlinks_overview(target: str, target_type: str = "root_domain") -> dict | None:
+    """
+    Backlink overview for domain/root_domain/subdomain/url.
+    Common columns (vary by plan): 'backlinks', 'refdomains', 'ascore'
+    """
+    # Backlinks API endpoints vary by account; this one works for most:
+    rows = semrush_get(
+        "backlinks_overview",
+        {"target": target, "target_type": target_type}
+    )
+    return rows[0] if rows else None
+
+def semrush_refdomains_count(target: str, target_type: str = "root_domain") -> int | None:
+    rows = semrush_get(
+        "backlinks_refdomains",
+        {"target": target, "target_type": target_type, "export_columns": "refdomain"}
+    )
+    return len(rows) if rows is not None else None
+
+def semrush_domain_overview(domain: str, database: str = "uk", display_date: str | None = None) -> dict | None:
+    """
+    Domain analytics (organic keywords & estimated traffic). 
+    Legacy Analytics API often exposes: type=domain_ranks (current) and 'display_date' for history.
+    Returns the first row with columns like: Dn (domain), Or (organic keywords), Ot (organic traffic).
+    """
+    params = {
+        "domain": domain,
+        "database": database,
+        "export_columns": "Dn,Or,Ot"  # Domain, Organic keywords, Organic traffic (est.)
+    }
+    if display_date:
+        params["display_date"] = display_date  # YYYY-MM-15 (Semrush expects a month day; 15 is common)
+    rows = semrush_get("domain_ranks", params)
+    return rows[0] if rows else None
+
+def semrush_url_keywords_count(url: str, database: str = "uk") -> int | None:
+    """
+    Count keywords a specific URL ranks for (approximation).
+    type=url_organic returns rows per keyword → count = len(rows).
+    """
+    rows = semrush_get(
+        "url_organic",
+        {"url": url, "database": database, "display_limit": 1_000, "export_columns": "Ph,Po"}
+    )
+    return len(rows) if rows is not None else None
+
+def semrush_keyword_volumes(keywords: list[str], database: str = "uk") -> list[dict] | None:
+    """
+    Batch volumes for up to ~100 keywords.
+    'phrase_all' typically returns: Ph (phrase), Nq (volume), Co (competition), Kd (difficulty) depending on plan.
+    """
+    kws = ",".join(kw.strip() for kw in keywords if kw.strip())[:5000]  # keep URL small
+    rows = semrush_get(
+        "phrase_all",
+        {"phrase": kws, "database": database, "export_columns": "Ph,Nq,Kd"}
+    )
+    return rows
+
+def semrush_domain_mom_yoy(domain: str, database: str = "uk") -> dict | None:
+    """
+    Pull current, previous month, and previous year (same month) Or/Ot and compute deltas.
+    """
+    anchor = last_full_month_anchor()
+    this_m = anchor.strftime("%Y-%m-15")
+    prev_m = months_ago(anchor, 1).strftime("%Y-%m-15")
+    prev_y = months_ago(anchor, 12).strftime("%Y-%m-15")
+
+    cur = semrush_domain_overview(domain, database, this_m) or {}
+    mo  = semrush_domain_overview(domain, database, prev_m) or {}
+    yo  = semrush_domain_overview(domain, database, prev_y) or {}
+
+    def as_int(x): 
+        try: return int(float(x))
+        except: return None
+
+    Or_cur, Ot_cur = as_int(cur.get("Or")), as_int(cur.get("Ot"))
+    Or_mo,  Ot_mo  = as_int(mo.get("Or")),  as_int(mo.get("Ot"))
+    Or_yo,  Ot_yo  = as_int(yo.get("Or")),  as_int(yo.get("Ot"))
+
+    def delta(cur, old):
+        if cur is None or old is None: return None
+        if old == 0: return None
+        return round((cur - old) / old * 100, 1)
+
+    return {
+        "Or": Or_cur, "Ot": Ot_cur,
+        "Or_mom_%": delta(Or_cur, Or_mo), "Ot_mom_%": delta(Ot_cur, Ot_mo),
+        "Or_yoy_%": delta(Or_cur, Or_yo), "Ot_yoy_%": delta(Ot_cur, Ot_yo),
+        "_dates": {"this": this_m, "mom": prev_m, "yoy": prev_y}
+    }
 
 # ----------------------------- Content & Structure Analysis Helpers -----------------------------
 
