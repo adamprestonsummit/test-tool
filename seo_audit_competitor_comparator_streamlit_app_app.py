@@ -1031,10 +1031,7 @@ with st.sidebar:
     default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
     competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
 
-st.subheader("Semrush (optional)")
-use_semrush = st.checkbox("Fetch Semrush insights", value=True, key="semrush_toggle")
-if use_semrush and not _get_semrush_key():
-    st.warning("No SEMRUSH_API_KEY found in Secrets.")
+
 
 
     st.subheader("AI Analysis")
@@ -1043,7 +1040,10 @@ if use_semrush and not _get_semrush_key():
     use_ai     = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
 
-    
+    st.subheader("Semrush (optional)")
+use_semrush = st.checkbox("Fetch Semrush insights", value=True, key="semrush_toggle")
+if use_semrush and not _get_semrush_key():
+    st.warning("No SEMRUSH_API_KEY found in Secrets.")
 # Optional: run button with a key too (avoids clashes if there's another button elsewhere)
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
 
