@@ -867,7 +867,7 @@ with st.sidebar:
         st.info("Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI analysis.")
     run_btn = st.button("Run audit", type="primary")
     st.divider()
-     st.subheader("AI Analysis")
+    st.subheader("AI Analysis")
     provider = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0)
     use_ai = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)")
