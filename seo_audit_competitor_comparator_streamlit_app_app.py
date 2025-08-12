@@ -970,10 +970,6 @@ with st.sidebar:
     default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
     competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
     
-    st.subheader("Semrush (optional)")
-use_semrush = st.checkbox("Fetch Semrush insights", value=True, key="semrush_toggle")
-if use_semrush and not _get_semrush_key():
-    st.warning("No SEMRUSH_API_KEY found in Secrets.")
 
     st.subheader("AI Analysis")
     show_ai_debug = st.checkbox("Show AI debug", value=False, key="ai_debug")
@@ -1002,6 +998,36 @@ if run_btn and default_domain:
     for i, t in enumerate(targets, 1):
         status.write(f"Fetching: {t}")
         res = analyze_page(t, use_ai=use_ai, topic_hint=topic_hint)
+        if use_semrush:
+    domain = res.get("_domain")
+    final_url = res.get("_final_url") or res.get("_url")
+
+    # Backlinks
+    bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
+    bl_url = semrush_backlinks_overview(final_url, "url") or {}
+    # (Optional extra count via refdomains list)
+    rd_dom_count = semrush_refdomains_count(domain, "root_domain")
+    rd_url_count = semrush_refdomains_count(final_url, "url")
+
+    # Domain organic MoM/YoY (UK)
+    dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
+
+    # URL-level organic keyword count (rough)
+    url_kw_count = semrush_url_keywords_count(final_url, "uk")
+
+    res["semrush"] = {
+        "backlinks_domain": bl_dom,
+        "backlinks_url": bl_url,
+        "refdomains_domain_count": rd_dom_count,
+        "refdomains_url_count": rd_url_count,
+        "domain_organic_uk": dom_ov,
+        "url_keywords_uk": url_kw_count,
+    }
+
+    # Optional: AI → Semrush keyword volumes
+    if topic_hint:
+        res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
+
         results.append(res)
         progress.progress(i / len(targets))
 
