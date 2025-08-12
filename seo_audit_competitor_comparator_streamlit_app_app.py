@@ -1260,7 +1260,7 @@ ai_cats = [
 cats = base_cats + ai_cats
 
 fig = go.Figure()
-    theta = [c[0] for c in cats]
+theta = [c[0] for c in cats]
     for r in results:
         vals = [r.get(c[1], 0) for c in cats]
         fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
