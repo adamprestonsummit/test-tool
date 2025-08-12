@@ -1092,16 +1092,7 @@ if run_btn and default_domain:
             show_ai_debug=show_ai_debug,
         )
 
-        # AI analysis (optional)
-if use_ai:
-    ai = ai_analyze_with_openai(visible_text, topic_hint, debug=show_ai_debug)
-    if ai:
-        result["ai_scores"] = ai.get("ai_scores")
-        result["ai_findings"] = ai.get("ai_findings")
-    else:
-        result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
-
-
+        
         # Semrush extras (optional)
         if use_semrush:
             domain = res.get("_domain")
