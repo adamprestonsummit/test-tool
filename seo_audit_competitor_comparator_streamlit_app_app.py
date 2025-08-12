@@ -1,19 +1,61 @@
-# ----- Imports -----
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 from typing import List, Dict, Any
+import math
 
-# ===== Helper functions =====
+# --- URL normalizer ---
 def normalize_url(url: str) -> str:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     return url.strip().rstrip("/")
 
+# --- Get Semrush key ---
 def _get_semrush_key():
     return st.secrets.get("SEMRUSH_API_KEY")
 
-# Placeholder functions (replace with real API calls)
+# --- Semrush scoring helpers ---
+def score_semrush_backlinks(bl_dom: dict | None, rd_dom_count: int | None) -> int:
+    bl = 0
+    ascore = None
+    if isinstance(bl_dom, dict):
+        try:
+            bl = int(float(bl_dom.get("backlinks") or 0))
+        except Exception:
+            bl = 0
+        try:
+            ascore_val = bl_dom.get("ascore") or bl_dom.get("authority_score")
+            ascore = int(float(ascore_val)) if ascore_val is not None else None
+        except Exception:
+            ascore = None
+    rd = int(rd_dom_count or 0)
+    bl_s = min(100, int((math.log10(bl + 1) / 3.0) * 100))
+    rd_s = min(100, int((math.log10(rd + 1) / 3.0) * 100))
+    parts = [bl_s, rd_s]
+    if ascore is not None:
+        parts.append(max(0, min(100, int(ascore))))
+    return int(sum(parts) / len(parts)) if parts else 0
+
+def score_semrush_organic_trend(dom_ov: dict | None) -> int:
+    def pct(v):
+        if v is None:
+            return None
+        try:
+            return float(str(v).replace("%", "").strip())
+        except Exception:
+            return None
+    if not isinstance(dom_ov, dict):
+        return 50
+    moms = []
+    for k in ("Or_mom_%", "Ot_mom_%"):
+        pv = pct(dom_ov.get(k))
+        if pv is not None:
+            moms.append(pv)
+    mom = sum(moms) / len(moms) if moms else 0.0
+    mom = max(-50.0, min(50.0, mom))
+    return int(round((mom + 50.0) / 100.0 * 100))
+
+# --- Mock analysis & Semrush calls (replace with real implementations) ---
 def analyze_page(url: str, use_ai=False, topic_hint=None, show_ai_debug=False):
     return {
         "_domain": url.split("//")[-1].split("/")[0],
@@ -24,20 +66,31 @@ def analyze_page(url: str, use_ai=False, topic_hint=None, show_ai_debug=False):
         "accessibility_score": 88,
         "best_practices_score": 70,
         "seo_score": 85,
-        "content_depth_score": 65 if use_ai else None,
-        "entity_coverage_score": 60 if use_ai else None,
+        "score_title": 90,
+        "score_meta_desc": 85,
+        "score_h1": 80,
+        "score_links": 75,
+        "score_images_alt": 70,
+        "score_tech": 85,
+        "score_social": 65,
+        "score_performance": 75,
+        "score_readability": 70,
+        "score_originality": 60,
+        "score_tone": 80,
+        "score_heading_structure": 75,
+        "score_anchor_quality": 70,
+        "score_js": 65,
         "semrush": {},
     }
 
-# Mock Semrush functions (replace with actual Semrush API calls)
 def semrush_backlinks_overview(target, scope):
-    return {"backlinks": 100, "authority_score": 55}
+    return {"backlinks": 120, "authority_score": 55}
 
 def semrush_refdomains_count(target, scope):
-    return 25
+    return 30
 
 def semrush_domain_mom_yoy(domain, country_code):
-    return {"mom_change": "+5%", "yoy_change": "+12%"}
+    return {"Or_mom_%": "+5%", "Ot_mom_%": "+7%"}
 
 def semrush_url_keywords_count(url, country_code):
     return 45
@@ -48,30 +101,21 @@ def keyword_research_with_volumes(topic, country_code):
 # ----- Sidebar -----
 with st.sidebar:
     st.header("Settings")
-    default_domain = st.text_input(
-        "Your domain or URL",
-        placeholder="example.com or https://example.com",
-        key="domain_input",
-    )
-
-    competitors = st.text_area(
-        "Competitors (one per line)",
-        placeholder="competitor1.com\ncompetitor2.com",
-        key="competitors_input",
-    )
+    default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
+    competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
 
     st.subheader("AI Analysis")
-    show_ai_debug = st.checkbox("Show AI debug", value=False, key="ai_debug")
-    provider = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
+    show_ai_debug = st.checkbox("Show AI debug", value=False)
+    provider = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0)
     use_ai = provider != "Off"
-    topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
+    topic_hint = st.text_input("Topic/intent hint (optional)", "")
 
     st.subheader("Semrush (optional)")
-    use_semrush = st.checkbox("Fetch Semrush insights", value=False, key="semrush_toggle")
+    use_semrush = st.checkbox("Fetch Semrush insights", value=False)
     if use_semrush and not _get_semrush_key():
         st.warning("No SEMRUSH_API_KEY found in Secrets.")
 
-    run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
+    run_btn = st.button("Run audit", type="primary")
 # ----- Main Execution -----
 if run_btn and default_domain:
     targets = [normalize_url(default_domain)]
@@ -81,7 +125,7 @@ if run_btn and default_domain:
             targets.append(normalize_url(line))
 
     st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
-    
+
     results: List[Dict[str, Any]] = []
     progress = st.progress(0.0)
     status = st.empty()
@@ -118,11 +162,12 @@ if run_btn and default_domain:
                 "url_keywords_uk": url_kw_count,
             }
 
-            # Add Semrush scores to radar chart metrics
-            res["semrush_backlinks_score"] = bl_dom.get("backlinks", 0)
-            res["semrush_traffic_change_score"] = (
-                float(dom_ov.get("mom_change", "0").replace("%", "")) if "mom_change" in dom_ov else 0
-            )
+            # Add normalized scores for radar chart
+            res["score_semrush_backlinks"] = score_semrush_backlinks(bl_dom, rd_dom_count)
+            res["score_semrush_trend"] = score_semrush_organic_trend(dom_ov)
+        else:
+            res["score_semrush_backlinks"] = 0
+            res["score_semrush_trend"] = 50  # neutral
 
         # Optional AI keyword research
         if topic_hint:
@@ -132,55 +177,68 @@ if run_btn and default_domain:
         progress.progress(i / len(targets))
 
     status.write("Done.")
-# ----- Only proceed if results exist -----
 if "results" in locals() and results and isinstance(results, list):
 
-    # Base categories
-    base_cats = [
-        ("Performance", "performance_score"),
-        ("Accessibility", "accessibility_score"),
-        ("Best Practices", "best_practices_score"),
-        ("SEO", "seo_score"),
-        ("Backlinks", "semrush_backlinks_score"),           # NEW from Semrush
-        ("Traffic Change %", "semrush_traffic_change_score") # NEW from Semrush
+    # ----- Category Radar -----
+    cats = [
+        ("Title", "score_title"),
+        ("Meta", "score_meta_desc"),
+        ("H1", "score_h1"),
+        ("Links", "score_links"),
+        ("Alt", "score_images_alt"),
+        ("Tech", "score_tech"),
+        ("Social", "score_social"),
+        ("Perf", "score_performance"),
+        ("Readability", "score_readability"),
+        ("Originality", "score_originality"),
+        ("Tone", "score_tone"),
+        ("Headings", "score_heading_structure"),
+        ("Anchors", "score_anchor_quality"),
+        ("JS Reliance", "score_js"),
+        ("Backlinks", "score_semrush_backlinks"),     # Semrush score
+        ("Organic Trend", "score_semrush_trend"),     # Semrush score
     ]
 
-    # AI categories if available
-    ai_cats = []
-    if any(r.get("ai_scores") for r in results):
-        ai_cats.extend([
-            ("Content Depth", "content_depth_score"),
-            ("Entity Coverage", "entity_coverage_score"),
-        ])
-
-    cats = base_cats + ai_cats
-
-    # ----- Radar Chart -----
     fig = go.Figure()
     theta = [c[0] for c in cats]
-    for r in results:
-        vals = [r.get(c[1], 0) or 0 for c in cats]
-        fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, max(100, max([max([v or 0 for v in [r.get(c[1]) for c in cats]]) for r in results]))])),
-        showlegend=True,
-        height=520
-    )
+    color_palette = px.colors.qualitative.Safe  # Distinct colors
+    for idx, r in enumerate(results):
+        vals = [int(r.get(c[1], 0) or 0) for c in cats]
+        fig.add_trace(go.Scatterpolar(
+            r=vals, theta=theta, fill='toself',
+            name=r.get("_domain"),
+            line_color=color_palette[idx % len(color_palette)]
+        ))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
     st.plotly_chart(fig, use_container_width=True)
 
-    # ----- Overall score bar chart -----
-    st.subheader("Overall Score Comparison")
-    fig2 = px.bar(
-        x=[r.get("_domain") for r in results],
-        y=[r.get("overall_score") for r in results],
-        color=[r.get("_domain") for r in results],
-        color_discrete_sequence=px.colors.qualitative.Set2,
-        labels={"x": "Domain", "y": "Overall Score"},
-        text=[r.get("overall_score") for r in results],
+    # ----- Summary Table -----
+    st.subheader("Summary Scores")
+    import pandas as pd
+    summary_data = []
+    for r in results:
+        summary_data.append({
+            "Domain": r.get("_domain"),
+            "Overall": r.get("overall_score"),
+            "Backlinks": r.get("score_semrush_backlinks"),
+            "Organic Trend": r.get("score_semrush_trend"),
+        })
+    df_summary = pd.DataFrame(summary_data)
+
+    # Conditional coloring
+    def color_backlinks(val):
+        color = "red" if val < 40 else "orange" if val < 70 else "green"
+        return f"background-color: {color}; color: white;"
+
+    def color_trend(val):
+        color = "red" if val < 40 else "orange" if val < 70 else "green"
+        return f"background-color: {color}; color: white;"
+
+    st.dataframe(
+        df_summary.style.applymap(color_backlinks, subset=["Backlinks"])
+                        .applymap(color_trend, subset=["Organic Trend"]),
+        use_container_width=True
     )
-    fig2.update_traces(textposition="outside")
-    fig2.update_yaxes(range=[0, 100])
-    st.plotly_chart(fig2, use_container_width=True)
 
     # ----- Detail expanders -----
     st.subheader("Details by Site")
@@ -209,90 +267,23 @@ if "results" in locals() and results and isinstance(results, list):
                     "Canonical": r.get("canonical"),
                 })
 
-                st.markdown("**Content Quality**")
-                st.write({
-                    "Flesch Reading Ease": r.get("readability_fre"),
-                    "Originality (TTR)": r.get("originality", {}).get("ttr"),
-                    "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
-                    "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
-                    "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
-                })
-
-                st.markdown("**Content Stats**")
-                st.write({
-                    "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
-                    "Images": r.get("images"),
-                    "Alt ratio": r.get("img_alt_ratio"),
-                })
-
             with col2:
-                st.markdown("**Headings**")
-                st.write(r.get("headings"))
-                st.markdown("**Internal Link Anchors**")
-                st.write(r.get("anchor_quality"))
-                st.markdown("**JS Reliance**")
-                st.write(r.get("js_reliance"))
-                st.markdown("**Robots/Sitemap**")
-                st.write({
-                    "robots.txt": r.get("robots_exists"),
-                    "sitemap": r.get("sitemap_exists"),
-                })
-                st.markdown("**Social/Schema**")
-                st.write({
-                    "Open Graph": r.get("og_present"),
-                    "Twitter Cards": r.get("twitter_present"),
-                    "JSON-LD schema": r.get("schema_jsonld"),
-                })
-                if r.get("psi_scores"):
-                    st.markdown("**Lighthouse Categories (mobile)**")
-                    st.write(r.get("psi_scores"))
-                if r.get("cwv"):
-                    st.markdown("**Core Web Vitals (mobile)**")
-                    st.write(r.get("cwv"))
-
-            # ----- Semrush metrics -----
-            if r.get("semrush"):
-                sm = r["semrush"]
                 st.markdown("**Semrush Insights**")
+                sm = r.get("semrush", {})
                 st.write({
                     "Backlinks (domain)": sm.get("backlinks_domain", {}).get("backlinks", "n/a"),
-                    "Backlinks (URL)": sm.get("backlinks_url", {}).get("backlinks", "n/a"),
                     "Referring domains (domain)": sm.get("refdomains_domain_count", "n/a"),
-                    "Referring domains (URL)": sm.get("refdomains_url_count", "n/a"),
                     "Authority Score": sm.get("backlinks_domain", {}).get("authority_score", "n/a"),
                     "Organic traffic UK (MoM/YoY)": sm.get("domain_organic_uk", {}),
                     "Keyword count UK (URL)": sm.get("url_keywords_uk", "n/a"),
                 })
 
-            # ----- AI Insights -----
+            # AI Insights
             if r.get("ai_scores"):
                 st.markdown("**AI Analysis**")
                 st.write(r.get("ai_scores"))
-                ai_f = r.get("ai_findings") or {}
-                if ai_f:
-                    if ai_f.get("missing_subtopics"):
-                        st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
-                    if ai_f.get("copy_suggestions"):
-                        st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
-                    if ai_f.get("schema_recommendations"):
-                        st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
-                    if ai_f.get("faq_suggestions"):
-                        st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
-                    if ai_f.get("internal_link_suggestions"):
-                        st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
-            elif r.get("_ai_error"):
-                st.info(f"AI note: {r['_ai_error']}")
 
-            # ----- Recommendations -----
-            st.markdown("**Recommendations**")
-            recs = r.get("_recommendations", [])
-            if recs:
-                for m in recs:
-                    st.write("• ", m)
-            else:
-                st.write("No critical issues detected. Nice!")
-
-            # ----- Keyword research -----
+            # Keyword research
             if r.get("keyword_research"):
                 st.markdown("**AI Keyword Research + Volumes (UK)**")
                 st.dataframe(r["keyword_research"], use_container_width=True)
