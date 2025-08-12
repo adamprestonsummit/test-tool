@@ -1010,7 +1010,7 @@ if run_btn and default_domain:
                     st.write(r.get("cwv"))
 
             if r.get("ai_scores"):
-                st.markdown("**AI Analysis (Gemini)**")
+                st.markdown("**AI Analysis **")
                 st.write(r.get("ai_scores"))
                 ai_f = r.get("ai_findings") or {}
                 if ai_f:
