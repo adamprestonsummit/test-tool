@@ -29,6 +29,16 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 
+def _get_semrush_key() -> Optional[str]:
+    """
+    Get the Semrush API key from environment variables or Streamlit secrets.
+    """
+    return (
+        os.environ.get("SEMRUSH_API_KEY")
+        or (st.secrets.get("SEMRUSH_API_KEY") if hasattr(st, "secrets") else None)
+    )
+
+
 # Optional AI SDK (Gemini)
 try:
     import google.generativeai as genai  # type: ignore
