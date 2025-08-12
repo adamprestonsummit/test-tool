@@ -830,7 +830,7 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = Non
 
        # AI analysis (optional)
     if use_ai:
-    ai = ai_analyze_with_openai(visible_text, topic_hint)
+        ai = ai_analyze_with_openai(visible_text, topic_hint)
     if ai:
         result["ai_scores"] = ai.get("ai_scores")
         result["ai_findings"] = ai.get("ai_findings")
