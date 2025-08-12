@@ -1129,30 +1129,104 @@ if run_btn and default_domain:
     status.write("Done.")
     # ↓ Keep your Summary / Radar / Details / Downloads sections after this
 
-    # ----- Summary Table -----
-    st.subheader("Summary")
+   # ------------------------ SUMMARY TABLE ------------------------
+import pandas as pd
 
-    def row_from(r: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            "Domain": r.get("_domain"),
-            "Final URL": r.get("_final_url"),
-            "HTTP": r.get("status_code"),
-            "Load (ms)": r.get("elapsed_ms"),
-            "Title len": r.get("title_len"),
-            "Meta len": r.get("meta_desc_len"),
-            "H1s": r.get("h1_count"),
-            "Alt %": int(round((r.get("img_alt_ratio", 0) or 0) * 100)),
-            "Tech": r.get("score_tech"),
-            "Perf": r.get("score_performance"),
-            "Social": r.get("score_social"),
-            "Overall": r.get("overall_score"),
-            "Issues": r.get("_issue_count"),
-            "AI?": "Yes" if r.get("ai_scores") else "No",
-            "Error": r.get("error"),
-        }
+# Flatten results into a list of dicts for DataFrame
+flat_results = []
+for res in results:
+    row = {
+        "Domain": res.get("_domain"),
+        "Final URL": res.get("_final_url") or res.get("_url"),
+        "HTTP": res.get("http_status"),
+        "Load (ms)": res.get("load_time_ms"),
+        "Title len": res.get("title_length"),
+        "Meta len": res.get("meta_length"),
+        "H1s": res.get("h1_count"),
+        "Alt %": res.get("alt_text_percent"),
+        "Tech": res.get("tech_score"),
+        "Perf": res.get("perf_score"),
+        "Social": res.get("social_score"),
+        "Overall": res.get("overall_score"),
+    }
 
-    table_rows = [row_from(r) for r in results]
-    st.dataframe(table_rows, use_container_width=True)
+    # Semrush metrics if available
+    sm = res.get("semrush", {})
+    row.update({
+        "BL_dom": sm.get("backlinks_domain", {}).get("backlinks", "N/A"),
+        "BL_url": sm.get("backlinks_url", {}).get("backlinks", "N/A"),
+        "RD_dom": sm.get("refdomains_domain_count", "N/A"),
+        "RD_url": sm.get("refdomains_url_count", "N/A"),
+        "OrgTraffic_UK": sm.get("domain_organic_uk", {}).get("traffic", "N/A"),
+        "MoM_UK": sm.get("domain_organic_uk", {}).get("mom_change", "N/A"),
+        "YoY_UK": sm.get("domain_organic_uk", {}).get("yoy_change", "N/A"),
+        "KW_url_UK": sm.get("url_keywords_uk", "N/A"),
+    })
+
+    flat_results.append(row)
+
+df_summary = pd.DataFrame(flat_results)
+
+# Rename columns for display
+df_summary.rename(columns={
+    "BL_dom": "Backlinks (Domain)",
+    "BL_url": "Backlinks (URL)",
+    "RD_dom": "Ref Domains (Domain)",
+    "RD_url": "Ref Domains (URL)",
+    "OrgTraffic_UK": "Organic Traffic UK",
+    "MoM_UK": "MoM Change UK",
+    "YoY_UK": "YoY Change UK",
+    "KW_url_UK": "Keywords (URL, UK)"
+}, inplace=True)
+
+# Highlight function for Semrush metrics
+def highlight_values(val, higher_is_better=True):
+    if val == "N/A" or val is None:
+        return ""
+    try:
+        val = float(val)
+    except:
+        return ""
+    if higher_is_better:
+        if val > 1000:
+            return "background-color: #4caf50; color: white;"  # green strong
+        elif val > 500:
+            return "background-color: #c8e6c9;"  # light green
+        else:
+            return "background-color: #ffcdd2;"  # light red
+    else:
+        # For MoM/YoY where higher positive % is better
+        if val > 0:
+            return "background-color: #4caf50; color: white;"
+        elif val > -5:
+            return "background-color: #fff9c4;"  # yellow neutral
+        else:
+            return "background-color: #ffcdd2;"  # red negative
+
+# Apply highlighting selectively
+semrush_cols_high = [
+    "Backlinks (Domain)", "Backlinks (URL)",
+    "Ref Domains (Domain)", "Ref Domains (URL)",
+    "Organic Traffic UK", "Keywords (URL, UK)"
+]
+semrush_cols_percent = ["MoM Change UK", "YoY Change UK"]
+
+styled_df = df_summary.style.applymap(lambda v: highlight_values(v, True), subset=semrush_cols_high)
+styled_df = styled_df.applymap(lambda v: highlight_values(v, False), subset=semrush_cols_percent)
+
+# Display
+st.subheader("Summary")
+st.dataframe(styled_df, use_container_width=True)
+
+# Optional CSV download
+csv = df_summary.to_csv(index=False).encode("utf-8")
+st.download_button(
+    label="Download Summary CSV",
+    data=csv,
+    file_name="seo_audit_summary.csv",
+    mime="text/csv",
+)
+
 
     # ----- Radar chart of category scores -----
     st.subheader("Category Radar")
