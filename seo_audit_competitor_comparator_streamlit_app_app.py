@@ -191,101 +191,78 @@ def _get_gemini_key() -> Optional[str]:
     )
 
 
-def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30) -> Optional[Dict[str, Any]]:
-    """
-    Calls OpenAI Responses API and returns a dict with ai_scores & ai_findings.
-    Requires OPENAI_API_KEY. Returns None on failure.
-    """
+def _get_openai_key() -> Optional[str]:
+    return (
+        os.environ.get("OPENAI_API_KEY")
+        or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None)
+    )
+
+def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30, debug: bool = False) -> Optional[Dict[str, Any]]:
     api_key = _get_openai_key()
     if not api_key:
+        if debug: st.write("DEBUG: No OPENAI_API_KEY found")
         return None
 
     text = (page_text or "").strip()
     if len(text) > 20000:
-        text = text[:20000]  # trim cost/latency
+        text = text[:20000]
 
     schema_hint = {
         "ai_scores": {
-            "intent_match": 0,
-            "topical_coverage": 0,
-            "eeat": 0,
-            "helpfulness": 0,
-            "originality_judgement": 0,
-            "tone_fit": 0,
-            "conversion_copy": 0,
-            "internal_link_opps": 0
+            "intent_match": 0, "topical_coverage": 0, "eeat": 0, "helpfulness": 0,
+            "originality_judgement": 0, "tone_fit": 0, "conversion_copy": 0, "internal_link_opps": 0
         },
         "ai_findings": {
-            "missing_subtopics": [],
-            "weak_sections": [],
-            "entities_detected": [],
-            "schema_recommendations": [],
-            "faq_suggestions": [],
-            "internal_link_suggestions": [],
-            "copy_suggestions": []
+            "missing_subtopics": [], "weak_sections": [], "entities_detected": [],
+            "schema_recommendations": [], "faq_suggestions": [],
+            "internal_link_suggestions": [], "copy_suggestions": []
         }
     }
 
     system_text = (
-        "You are an SEO content analyst. Evaluate the webpage copy and return ONLY valid JSON "
-        "with ai_scores and ai_findings matching the provided schema."
+        "You are an SEO content analyst. Return ONLY valid JSON matching the provided schema."
     )
-
     user_prompt = (
-        "Return ONLY compact JSON matching this schema (no prose):\n"
+        "Return ONLY compact JSON (no prose) exactly matching this schema:\n"
         f"{json.dumps(schema_hint)}\n\n"
-        f"Business/topic hint (optional): {topic_hint or '(none)'}\n"
-        "Text to analyze:\n<<<\n"
-        f"{text}\n>>>\n\n"
-        "Scoring rubric:\n"
-        "- intent_match, topical_coverage, eeat, helpfulness, originality_judgement,\n"
-        "- tone_fit, conversion_copy, internal_link_opps (0–100 each).\n"
-        "Return JSON only."
+        f"Business/topic hint: {topic_hint or '(none)'}\n"
+        "Text to analyze:\n<<<\n" + text + "\n>>>\n\n"
+        "Score intent_match, topical_coverage, eeat, helpfulness, originality_judgement, "
+        "tone_fit, conversion_copy, internal_link_opps (0–100 each). Return JSON only."
     )
 
-    endpoint = "https://api.openai.com/v1/responses"  # Responses API
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    endpoint = "https://api.openai.com/v1/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {
-        "model": "gpt-4o-mini",  # good cost/latency tradeoff
-        "input": [
-            {"role": "system", "content": [{"type": "text", "text": system_text}]},
-            {"role": "user",   "content": [{"type": "text", "text": user_prompt}]},
+        "model": "gpt-4o-mini",  # good availability & price; switch to 'gpt-4o' if you have access
+        "messages": [
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.2,
     }
 
     try:
         resp = requests.post(endpoint, headers=headers, json=body, timeout=timeout)
+        if debug: st.write("DEBUG OpenAI status:", resp.status_code)
         if resp.status_code != 200:
-            # Optional: surface error text while testing
-            # st.write("OpenAI error:", resp.status_code, resp.text[:400])
+            if debug: st.write("DEBUG OpenAI error body:", resp.text[:800])
             return None
         data = resp.json()
-
-        # The Responses API often includes a convenience "output_text".
-        out_text = data.get("output_text")
+        out_text = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
         if not out_text:
-            # Fallback: dig into output array if needed
-            # (structure can vary; this handles typical shapes)
-            output = data.get("output") or []
-            if output and isinstance(output, list):
-                parts = output[0].get("content") or []
-                if parts and isinstance(parts, list):
-                    out_text = "".join(p.get("text", "") for p in parts)
-        if not out_text:
+            if debug: st.write("DEBUG: Empty message content", data)
             return None
 
         out_text = out_text.strip()
-        # Strip accidental code fences
         if out_text.startswith("```"):
             out_text = re.sub(r"^```(?:json)?|```$", "", out_text, flags=re.MULTILINE).strip()
 
         return json.loads(out_text)
-    except Exception:
+    except Exception as e:
+        if debug: st.write("DEBUG exception:", repr(e))
         return None
+
 
 # ----------------------------- Content & Structure Analysis Helpers -----------------------------
 
