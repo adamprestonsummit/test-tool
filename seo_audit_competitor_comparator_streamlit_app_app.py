@@ -1034,7 +1034,7 @@ st.caption("Audits your homepage for on-page + technical basics, optional CWV vi
 
 # --- Sidebar (define ALL inputs first) ---
 with st.sidebar:
-st.header("Settings")
+    st.header("Settings")
     default_domain = st.text_input(
         "Your domain or URL",
         placeholder="example.com or https://example.com",
