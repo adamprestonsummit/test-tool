@@ -1259,23 +1259,23 @@ ai_cats = [
 
 cats = base_cats + ai_cats
 
-fig = go.Figure()
-theta = [c[0] for c in cats]
-for r in results:
-        vals = [r.get(c[1], 0) for c in cats]
-        fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
-        fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
-        st.plotly_chart(fig, use_container_width=True)
+    fig = go.Figure()
+    theta = [c[0] for c in cats]
+    for r in results:
+    vals = [r.get(c[1], 0) for c in cats]
+    fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
+    st.plotly_chart(fig, use_container_width=True)
 
     # ----- Overall score bar chart -----
-        st.subheader("Overall Score Comparison")
-        fig2 = px.bar(
-        x=[r.get("_domain") for r in results],
-        y=[r.get("overall_score") for r in results],
-        color=[r.get("_domain") for r in results],
-        color_discrete_sequence=px.colors.qualitative.Set2,
-        labels={"x": "Domain", "y": "Overall Score"},
-        text=[r.get("overall_score") for r in results],
+    st.subheader("Overall Score Comparison")
+    fig2 = px.bar(
+    x=[r.get("_domain") for r in results],
+    y=[r.get("overall_score") for r in results],
+    color=[r.get("_domain") for r in results],
+    color_discrete_sequence=px.colors.qualitative.Set2,
+    labels={"x": "Domain", "y": "Overall Score"},
+    text=[r.get("overall_score") for r in results],
     )
     fig2.update_traces(textposition="outside")
     fig2.update_yaxes(range=[0, 100])
