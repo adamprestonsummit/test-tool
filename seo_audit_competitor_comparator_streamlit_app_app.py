@@ -1228,153 +1228,130 @@ st.download_button(
 )
 
 
-    # ----- Radar chart of category scores -----
-st.subheader("Category Radar")
-base_cats = [
-        ("Title", "score_title"),
-        ("Meta", "score_meta_desc"),
-        ("H1", "score_h1"),
-        ("Links", "score_links"),
-        ("Alt", "score_images_alt"),
-        ("Tech", "score_tech"),
-        ("Social", "score_social"),
-        ("Perf", "score_performance"),
-        ("Readability", "score_readability"),
-        ("Originality", "score_originality"),
-        ("Tone", "score_tone"),
-        ("Headings", "score_heading_structure"),
-        ("Anchors", "score_anchor_quality"),
-        ("JS Reliance", "score_js"),
-    ]
-ai_cats = [
-        ("AI Intent", "score_ai_intent"),
-        ("AI Coverage", "score_ai_coverage"),
-        ("AI E-E-A-T", "score_ai_eeat"),
-        ("AI Helpfulness", "score_ai_helpfulness"),
-        ("AI Originality", "score_ai_originality"),
-        ("AI Tone", "score_ai_tone"),
-        ("AI Conversion", "score_ai_conversion"),
-        ("AI Int. Links", "score_ai_internal_links"),
-    ] if any(r.get("ai_scores") for r in results) else []
+   # ----- Radar chart -----
+cats = base_cats + ai_cats
+fig = go.Figure()
+theta = [c[0] for c in cats]
 
-    cats = base_cats + ai_cats
-
-    fig = go.Figure()
-    theta = [c[0] for c in cats]
-    for r in results:
+for r in results:
     vals = [r.get(c[1], 0) for c in cats]
     fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
-    st.plotly_chart(fig, use_container_width=True)
 
-    # ----- Overall score bar chart -----
-    st.subheader("Overall Score Comparison")
-    fig2 = px.bar(
+fig.update_layout(
+    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+    showlegend=True,
+    height=520
+)
+st.plotly_chart(fig, use_container_width=True)
+
+# ----- Overall score bar chart -----
+st.subheader("Overall Score Comparison")
+fig2 = px.bar(
     x=[r.get("_domain") for r in results],
     y=[r.get("overall_score") for r in results],
     color=[r.get("_domain") for r in results],
     color_discrete_sequence=px.colors.qualitative.Set2,
     labels={"x": "Domain", "y": "Overall Score"},
     text=[r.get("overall_score") for r in results],
-    )
-    fig2.update_traces(textposition="outside")
-    fig2.update_yaxes(range=[0, 100])
-    st.plotly_chart(fig2, use_container_width=True)
+)
+fig2.update_traces(textposition="outside")
+fig2.update_yaxes(range=[0, 100])
+st.plotly_chart(fig2, use_container_width=True)
 
-    # ----- Detail expanders -----
-    st.subheader("Details by Site")
-    for r in results:
-        with st.expander(f"{r.get('_domain')} — details"):
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown("**Basics**")
-                st.write({
-                    "Final URL": r.get("_final_url"),
-                    "Status": r.get("status_code"),
-                    "HTTPS": r.get("https"),
-                    "Redirects": r.get("redirects"),
-                    "Load (ms)": r.get("elapsed_ms"),
-                    "HTML bytes": r.get("page_bytes"),
-                    "Noindex": r.get("noindex"),
-                })
-                st.markdown("**On-page**")
-                st.write({
-                    "Title": r.get("title"),
-                    "Title length": r.get("title_len"),
-                    "Meta desc length": r.get("meta_desc_len"),
-                    "H1 count": r.get("h1_count"),
-                    "Canonical": r.get("canonical"),
-                })
-                st.markdown("**Content Quality**")
-                st.write({
-                    "Flesch Reading Ease": r.get("readability_fre"),
-                    "Originality (TTR)": r.get("originality", {}).get("ttr"),
-                    "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
-                    "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
-                    "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
-                })
-                st.markdown("**Content Stats**")
-                st.write({
-                    "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
-                    "Images": r.get("images"),
-                    "Alt ratio": r.get("img_alt_ratio"),
-                })
-            with col2:
-                st.markdown("**Headings**")
-                st.write(r.get("headings"))
-                st.markdown("**Internal Link Anchors**")
-                st.write(r.get("anchor_quality"))
-                st.markdown("**JS Reliance**")
-                st.write(r.get("js_reliance"))
-                st.markdown("**Robots/Sitemap**")
-                st.write({
-                    "robots.txt": r.get("robots_exists"),
-                    "sitemap": r.get("sitemap_exists"),
-                })
-                st.markdown("**Social/Schema**")
-                st.write({
-                    "Open Graph": r.get("og_present"),
-                    "Twitter Cards": r.get("twitter_present"),
-                    "JSON-LD schema": r.get("schema_jsonld"),
-                })
-                if r.get("psi_scores"):
-                    st.markdown("**Lighthouse Categories (mobile)**")
-                    st.write(r.get("psi_scores"))
-                if r.get("cwv"):
-                    st.markdown("**Core Web Vitals (mobile)**")
-                    st.write(r.get("cwv"))
+# ----- Detail expanders -----
+st.subheader("Details by Site")
+for r in results:
+    with st.expander(f"{r.get('_domain')} — details"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("**Basics**")
+            st.write({
+                "Final URL": r.get("_final_url"),
+                "Status": r.get("status_code"),
+                "HTTPS": r.get("https"),
+                "Redirects": r.get("redirects"),
+                "Load (ms)": r.get("elapsed_ms"),
+                "HTML bytes": r.get("page_bytes"),
+                "Noindex": r.get("noindex"),
+            })
+            st.markdown("**On-page**")
+            st.write({
+                "Title": r.get("title"),
+                "Title length": r.get("title_len"),
+                "Meta desc length": r.get("meta_desc_len"),
+                "H1 count": r.get("h1_count"),
+                "Canonical": r.get("canonical"),
+            })
+            st.markdown("**Content Quality**")
+            st.write({
+                "Flesch Reading Ease": r.get("readability_fre"),
+                "Originality (TTR)": r.get("originality", {}).get("ttr"),
+                "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
+                "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
+                "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
+            })
+            st.markdown("**Content Stats**")
+            st.write({
+                "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
+                "Images": r.get("images"),
+                "Alt ratio": r.get("img_alt_ratio"),
+            })
 
-            if r.get("ai_scores"):
-                st.markdown("**AI Analysis **")
-                st.write(r.get("ai_scores"))
-                ai_f = r.get("ai_findings") or {}
-                if ai_f:
-                    if ai_f.get("missing_subtopics"):
-                        st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
-                    if ai_f.get("copy_suggestions"):
-                        st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
-                    if ai_f.get("schema_recommendations"):
-                        st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
-                    if ai_f.get("faq_suggestions"):
-                        st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
-                    if ai_f.get("internal_link_suggestions"):
-                        st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
-            elif r.get("_ai_error"):
-                        st.info(f"AI note: {r['_ai_error']}")
+        with col2:
+            st.markdown("**Headings**")
+            st.write(r.get("headings"))
+            st.markdown("**Internal Link Anchors**")
+            st.write(r.get("anchor_quality"))
+            st.markdown("**JS Reliance**")
+            st.write(r.get("js_reliance"))
+            st.markdown("**Robots/Sitemap**")
+            st.write({
+                "robots.txt": r.get("robots_exists"),
+                "sitemap": r.get("sitemap_exists"),
+            })
+            st.markdown("**Social/Schema**")
+            st.write({
+                "Open Graph": r.get("og_present"),
+                "Twitter Cards": r.get("twitter_present"),
+                "JSON-LD schema": r.get("schema_jsonld"),
+            })
+            if r.get("psi_scores"):
+                st.markdown("**Lighthouse Categories (mobile)**")
+                st.write(r.get("psi_scores"))
+            if r.get("cwv"):
+                st.markdown("**Core Web Vitals (mobile)**")
+                st.write(r.get("cwv"))
 
-            st.markdown("**Recommendations**")
-            recs = r.get("_recommendations", [])
-            if recs:
-                for m in recs:
-                    st.write("• ", m)
-            else:
-                st.write("No critical issues detected. Nice!")
+        if r.get("ai_scores"):
+            st.markdown("**AI Analysis**")
+            st.write(r.get("ai_scores"))
+            ai_f = r.get("ai_findings") or {}
+            if ai_f:
+                if ai_f.get("missing_subtopics"):
+                    st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
+                if ai_f.get("copy_suggestions"):
+                    st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
+                if ai_f.get("schema_recommendations"):
+                    st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
+                if ai_f.get("faq_suggestions"):
+                    st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
+                if ai_f.get("internal_link_suggestions"):
+                    st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
+        elif r.get("_ai_error"):
+            st.info(f"AI note: {r['_ai_error']}")
 
-  
+        st.markdown("**Recommendations**")
+        recs = r.get("_recommendations", [])
+        if recs:
+            for m in recs:
+                st.write("• ", m)
+        else:
+            st.write("No critical issues detected. Nice!")
 
-    if r.get("keyword_research"):
-        st.markdown("**AI Keyword Research + Volumes (UK)**")
-        st.dataframe(r["keyword_research"], use_container_width=True)
+        if r.get("keyword_research"):
+            st.markdown("**AI Keyword Research + Volumes (UK)**")
+            st.dataframe(r["keyword_research"], use_container_width=True)
 
 
      # ----- Downloads -----
