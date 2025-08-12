@@ -1028,31 +1028,56 @@ st.caption("Audits your homepage for on-page + technical basics, optional CWV vi
 
 with st.sidebar:
     st.header("Settings")
-    default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
-    competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
-
-
-
+    default_domain = st.text_input(
+        "Your domain or URL",
+        placeholder="example.com or https://example.com",
+        key="domain_input",
+    )
+    competitors = st.text_area(
+        "Competitors (one per line)",
+        placeholder="competitor1.com\ncompetitor2.com",
+        key="competitors_input",
+    )
 
     st.subheader("AI Analysis")
     show_ai_debug = st.checkbox("Show AI debug", value=False, key="ai_debug")
-    provider   = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
-    use_ai     = provider != "Off"
+    provider = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
+    use_ai = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
 
     st.subheader("Semrush (optional)")
-use_semrush = st.checkbox("Fetch Semrush insights", value=True, key="semrush_toggle")
-if use_semrush and not _get_semrush_key():
-    st.warning("No SEMRUSH_API_KEY found in Secrets.")
-# Optional: run button with a key too (avoids clashes if there's another button elsewhere)
+    use_semrush = st.checkbox("Fetch Semrush insights", value=False, key="semrush_toggle")
+    if use_semrush and not _get_semrush_key():
+        st.warning("No SEMRUSH_API_KEY found in Secrets.")
+
+    # Place the run button LAST in the sidebar
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
 
+    st.divider()
+    st.subheader("Google PSI API (optional)")
+    st.write("Set environment var `PSI_API_KEY` before running for Core Web Vitals + Lighthouse scores.")
+
+
 if run_btn and default_domain:
+    # build targets and run the audit
     targets = [normalize_url(default_domain)]
     for line in (competitors or "").splitlines():
         line = line.strip()
         if line:
             targets.append(normalize_url(line))
+
+    # later when you call analyze_page:
+    res = analyze_page(
+        t,
+        use_ai=use_ai,
+        topic_hint=topic_hint,
+        show_ai_debug=show_ai_debug,
+    )
+
+    # Semrush extras
+    if use_semrush:
+        # ... your Semrush calls and res["semrush"] assignment ...
+
 
     st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
 
