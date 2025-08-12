@@ -1258,94 +1258,74 @@ fig2.update_traces(textposition="outside")
 fig2.update_yaxes(range=[0, 100])
 st.plotly_chart(fig2, use_container_width=True)
 
-if 'results' in locals() and results:
+# Only show this section if results exist
+if results:
+    st.subheader("Details by Site")
     for res in results:
-
-# ----- Detail expanders -----
-st.subheader("Details by Site")
-for r in results:
-    with st.expander(f"{r.get('_domain')} — details"):
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Basics**")
-            st.write({
-                "Final URL": r.get("_final_url"),
-                "Status": r.get("status_code"),
-                "HTTPS": r.get("https"),
-                "Redirects": r.get("redirects"),
-                "Load (ms)": r.get("elapsed_ms"),
-                "HTML bytes": r.get("page_bytes"),
-                "Noindex": r.get("noindex"),
-            })
-            st.markdown("**On-page**")
-            st.write({
-                "Title": r.get("title"),
-                "Title length": r.get("title_len"),
-                "Meta desc length": r.get("meta_desc_len"),
-                "H1 count": r.get("h1_count"),
-                "Canonical": r.get("canonical"),
-            })
-            st.markdown("**Content Quality**")
-            st.write({
-                "Flesch Reading Ease": r.get("readability_fre"),
-                "Originality (TTR)": r.get("originality", {}).get("ttr"),
-                "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
-                "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
-                "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
-            })
-            st.markdown("**Content Stats**")
-            st.write({
-                "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
-                "Images": r.get("images"),
-                "Alt ratio": r.get("img_alt_ratio"),
-            })
-
-            # SEMRUSH data
-            sm = r.get("semrush", {})
-            if sm:
-                st.markdown("**Semrush Metrics**")
+        with st.expander(f"{res.get('_domain')} — details"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**Basics**")
                 st.write({
-                    "Backlinks (Domain)": sm.get("backlinks_domain", {}).get("backlinks", "N/A"),
-                    "Backlinks (URL)": sm.get("backlinks_url", {}).get("backlinks", "N/A"),
-                    "Ref Domains (Domain)": sm.get("refdomains_domain_count", "N/A"),
-                    "Ref Domains (URL)": sm.get("refdomains_url_count", "N/A"),
-                    "Organic Traffic UK": sm.get("domain_organic_uk", {}).get("traffic", "N/A"),
-                    "MoM Change UK": sm.get("domain_organic_uk", {}).get("mom_change", "N/A"),
-                    "YoY Change UK": sm.get("domain_organic_uk", {}).get("yoy_change", "N/A"),
-                    "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
+                    "Final URL": res.get("_final_url"),
+                    "Status": res.get("status_code"),
+                    "HTTPS": res.get("https"),
+                    "Redirects": res.get("redirects"),
+                    "Load (ms)": res.get("elapsed_ms"),
+                    "HTML bytes": res.get("page_bytes"),
+                    "Noindex": res.get("noindex"),
                 })
+                st.markdown("**On-page**")
+                st.write({
+                    "Title": res.get("title"),
+                    "Title length": res.get("title_len"),
+                    "Meta desc length": res.get("meta_desc_len"),
+                    "H1 count": res.get("h1_count"),
+                    "Canonical": res.get("canonical"),
+                })
+                st.markdown("**Content Quality**")
+                st.write({
+                    "Flesch Reading Ease": res.get("readability_fre"),
+                    "Originality (TTR)": res.get("originality", {}).get("ttr"),
+                    "Repeated 3-grams": res.get("originality", {}).get("repeated_trigram_ratio"),
+                    "Tone (exclam/100sents)": res.get("tone", {}).get("exclamation_density"),
+                    "Tone (buzz rate)": res.get("tone", {}).get("buzz_rate"),
+                })
+                st.markdown("**Content Stats**")
+                st.write({
+                    "Links (internal/external)": f"{res.get('internal_links')}/{res.get('external_links')}",
+                    "Images": res.get("images"),
+                    "Alt ratio": res.get("img_alt_ratio"),
+                })
+            with col2:
+                st.markdown("**Headings**")
+                st.write(res.get("headings"))
+                st.markdown("**Internal Link Anchors**")
+                st.write(res.get("anchor_quality"))
+                st.markdown("**JS Reliance**")
+                st.write(res.get("js_reliance"))
+                st.markdown("**Robots/Sitemap**")
+                st.write({
+                    "robots.txt": res.get("robots_exists"),
+                    "sitemap": res.get("sitemap_exists"),
+                })
+                st.markdown("**Social/Schema**")
+                st.write({
+                    "Open Graph": res.get("og_present"),
+                    "Twitter Cards": res.get("twitter_present"),
+                    "JSON-LD schema": res.get("schema_jsonld"),
+                })
+                if res.get("psi_scores"):
+                    st.markdown("**Lighthouse Categories (mobile)**")
+                    st.write(res.get("psi_scores"))
+                if res.get("cwv"):
+                    st.markdown("**Core Web Vitals (mobile)**")
+                    st.write(res.get("cwv"))
 
-        with col2:
-            st.markdown("**Headings**")
-            st.write(r.get("headings"))
-            st.markdown("**Internal Link Anchors**")
-            st.write(r.get("anchor_quality"))
-            st.markdown("**JS Reliance**")
-            st.write(r.get("js_reliance"))
-            st.markdown("**Robots/Sitemap**")
-            st.write({
-                "robots.txt": r.get("robots_exists"),
-                "sitemap": r.get("sitemap_exists"),
-            })
-            st.markdown("**Social/Schema**")
-            st.write({
-                "Open Graph": r.get("og_present"),
-                "Twitter Cards": r.get("twitter_present"),
-                "JSON-LD schema": r.get("schema_jsonld"),
-            })
-            if r.get("psi_scores"):
-                st.markdown("**Lighthouse Categories (mobile)**")
-                st.write(r.get("psi_scores"))
-            if r.get("cwv"):
-                st.markdown("**Core Web Vitals (mobile)**")
-                st.write(r.get("cwv"))
-
-        # AI analysis findings
-        if r.get("ai_scores"):
+        if res.get("ai_scores"):
             st.markdown("**AI Analysis**")
-            st.write(r.get("ai_scores"))
-            ai_f = r.get("ai_findings") or {}
+            st.write(res.get("ai_scores"))
+            ai_f = res.get("ai_findings") or {}
             if ai_f:
                 if ai_f.get("missing_subtopics"):
                     st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
@@ -1357,22 +1337,21 @@ for r in results:
                     st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
                 if ai_f.get("internal_link_suggestions"):
                     st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
-        elif r.get("_ai_error"):
-            st.info(f"AI note: {r['_ai_error']}")
+        elif res.get("_ai_error"):
+            st.info(f"AI note: {res['_ai_error']}")
 
-        # Recommendations
         st.markdown("**Recommendations**")
-        recs = r.get("_recommendations", [])
+        recs = res.get("_recommendations", [])
         if recs:
             for m in recs:
                 st.write("• ", m)
         else:
             st.write("No critical issues detected. Nice!")
 
-        # Keyword research results
-        if r.get("keyword_research"):
+        if res.get("keyword_research"):
             st.markdown("**AI Keyword Research + Volumes (UK)**")
-            st.dataframe(r["keyword_research"], use_container_width=True)
+            st.dataframe(res["keyword_research"], use_container_width=True)
+
 
 
 
