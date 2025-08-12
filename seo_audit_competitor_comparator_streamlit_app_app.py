@@ -1229,7 +1229,7 @@ st.download_button(
 
 
     # ----- Radar chart of category scores -----
-    st.subheader("Category Radar")
+st.subheader("Category Radar")
     base_cats = [
         ("Title", "score_title"),
         ("Meta", "score_meta_desc"),
