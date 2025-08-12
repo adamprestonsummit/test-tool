@@ -1,22 +1,25 @@
-# SEO Audit & Competitor Comparator — Streamlit App
+# SEO Audit & Competitor Comparator — Streamlit App (with optional Gemini AI)
 # ------------------------------------------------
 # Run locally:
 #   1) pip install -U streamlit requests beautifulsoup4 lxml tldextract plotly python-dateutil
-#   2) (optional) export PSI_API_KEY="<your-google-pagespeed-insights-api-key>"
-#   3) streamlit run app.py
+#   2) (optional, for AI) pip install -U google-generativeai
+#   3) (optional) export PSI_API_KEY="<your-google-pagespeed-insights-api-key>"
+#   4) (optional, for AI) export GEMINI_API_KEY="<your-gemini-api-key>"  # or GOOGLE_API_KEY
+#   5) streamlit run app.py
 #
 # What it does:
 # - Audits a domain's homepage for on-page SEO and technical basics
-# - (Optionally) pulls Core Web Vitals + Lighthouse category scores via Google PageSpeed Insights API
+# - (Optionally) pulls Core Web Vitals + Lighthouse via PageSpeed Insights API
 # - Compares multiple competitors side-by-side
 # - Shows radar + bar charts and detailed factor breakdowns
 # - Lets you download CSV/JSON of results
-# - NEW: Generates prescriptive recommendations for low-scoring areas
+# - Generates prescriptive recommendations for low-scoring areas
+# - NEW (optional): Runs Gemini AI for semantic content checks (intent, coverage, E-E-A-T, etc.)
 
 import os
 import re
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import requests
 from bs4 import BeautifulSoup
@@ -26,11 +29,22 @@ import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
 
-USER_AGENT = "Mozilla/5.0 (compatible; SEOAuditBot/1.0; +https://example.com/audit)"
+# Optional AI SDK (Gemini)
+try:
+    import google.generativeai as genai  # type: ignore
+    _GENAI_AVAILABLE = True
+except Exception:
+    genai = None
+    _GENAI_AVAILABLE = False
+
+USER_AGENT = "Mozilla/5.0 (compatible; SEOAuditBot/1.1; +https://example.com/audit)"
 TIMEOUT = 15
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Language": "en"}
 
 # ----------------------------- Basic Helpers -----------------------------
+
+AI_ENV_VARS = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]  # either works
+
 
 def normalize_url(domain_or_url: str) -> str:
     x = domain_or_url.strip()
@@ -49,8 +63,8 @@ def http_get(url: str) -> Tuple[Optional[requests.Response], Optional[str]]:
         return None, str(e)
 
 
-def get_home_html(url: str) -> Tuple[Optional[str], Dict]:
-    meta = {
+def get_home_html(url: str) -> Tuple[Optional[str], Dict[str, Any]]:
+    meta: Dict[str, Any] = {
         "final_url": None,
         "status_code": None,
         "redirects": 0,
@@ -72,6 +86,7 @@ def get_home_html(url: str) -> Tuple[Optional[str], Dict]:
     if resp.status_code >= 400:
         meta["error"] = f"HTTP {resp.status_code}"
         return None, meta
+    # best-effort decoding
     try:
         resp.encoding = resp.apparent_encoding or resp.encoding
         html = resp.text
@@ -127,12 +142,12 @@ def has_json_ld(soup: BeautifulSoup) -> bool:
     return False
 
 
-def get_robots_txt(domain_url: str) -> Dict:
+def get_robots_txt(domain_url: str) -> Dict[str, Any]:
     base = normalize_url(domain_url)
     if base.endswith("/"):
         base = base[:-1]
     robots_url = base + "/robots.txt"
-    meta = {"exists": False, "sitemaps": [], "disallow_count": 0, "error": None}
+    meta: Dict[str, Any] = {"exists": False, "sitemaps": [], "disallow_count": 0, "error": None}
     resp, err = http_get(robots_url)
     if err or not resp or resp.status_code >= 400:
         meta["error"] = err or (resp and f"HTTP {resp.status_code}")
@@ -157,6 +172,74 @@ def has_sitemap(domain_url: str, hinted_sitemaps: List[str]) -> bool:
         if resp and resp.status_code < 400 and resp.content and b"<urlset" in resp.content[:4096]:
             return True
     return False
+
+# ----------------------------- AI (Gemini) Helpers -----------------------------
+
+def _get_gemini_key() -> Optional[str]:
+    for k in AI_ENV_VARS:
+        v = os.environ.get(k)
+        if v:
+            return v
+    return None
+
+
+def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, timeout: int = 40) -> Optional[Dict[str, Any]]:
+    """Call Gemini and return dict with ai_scores & ai_findings. Returns None on failure or if SDK/API key missing."""
+    api_key = _get_gemini_key()
+    if not api_key or not _GENAI_AVAILABLE:
+        return None
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.0-pro")  # works broadly; update if you have 2.5
+        # Trim text for token/cost. Consider chunking for very long pages.
+        text = page_text.strip()
+        if len(text) > 20000:
+            text = text[:20000]
+        schema_hint = {
+            "ai_scores": {
+                "intent_match": 0,
+                "topical_coverage": 0,
+                "eeat": 0,
+                "helpfulness": 0,
+                "originality_judgement": 0,
+                "tone_fit": 0,
+                "conversion_copy": 0,
+                "internal_link_opps": 0,
+            },
+            "ai_findings": {
+                "missing_subtopics": [],
+                "weak_sections": [],
+                "entities_detected": [],
+                "schema_recommendations": [],
+                "faq_suggestions": [],
+                "internal_link_suggestions": [],
+                "copy_suggestions": [],
+            },
+        }
+        prompt = (
+            "You are an SEO content analyst. Evaluate the following visible page copy and return ONLY JSON matching this schema. "
+            "Do not include commentary or code fences.\n\n"
+            + json.dumps(schema_hint)
+            + "\n\nBusiness/topic hint: "
+            + (topic_hint or "(none)")
+            + "\nText to analyze: <<<\n"
+            + text
+            + "\n>>>\n"
+            + "Scoring rubric: intent_match, topical_coverage, eeat, helpfulness, originality_judgement, tone_fit, conversion_copy, internal_link_opps (0–100 each)."
+        )
+        resp = model.generate_content(prompt, generation_config={"temperature": 0.2})
+        out = resp.text or "{}"
+        out = out.strip()
+        # Attempt to recover JSON if the model added fences by accident
+        if out.startswith("```"):
+            out = re.sub(r"^```(?:json)?|```$", "", out, flags=re.MULTILINE).strip()
+        try:
+            return json.loads(out)
+        except Exception:
+            m = re.search(r"\{[\s\S]*\}$", out)
+            return json.loads(m.group(0)) if m else None
+    except Exception:
+        return None
 
 # ----------------------------- Content & Structure Analysis Helpers -----------------------------
 
@@ -201,12 +284,12 @@ def flesch_reading_ease(text: str) -> Optional[float]:
     return 206.835 - 1.015 * (w / s) - 84.6 * (syll / w)
 
 
-def originality_heuristic(text: str) -> Dict:
+def originality_heuristic(text: str) -> Dict[str, Any]:
     words = [w.lower() for w in re.findall(r"[A-Za-z']+", text)]
     w = len(words)
     unique = len(set(words))
     ttr = (unique / w) if w else 0.0
-    trigrams = [tuple(words[i:i+3]) for i in range(max(0, w - 2))]
+    trigrams = [tuple(words[i:i + 3]) for i in range(max(0, w - 2))]
     from collections import Counter
     c = Counter(trigrams)
     rep = sum(1 for _, v in c.items() if v > 1)
@@ -214,7 +297,7 @@ def originality_heuristic(text: str) -> Dict:
     return {"ttr": round(ttr, 3), "repeated_trigram_ratio": round(rep_ratio, 3)}
 
 
-def tone_heuristic(text: str) -> Dict:
+def tone_heuristic(text: str) -> Dict[str, Any]:
     tokens = [w.lower() for w in re.findall(r"[A-Za-z']+", text)]
     total = len(tokens)
     exclam = text.count("!")
@@ -230,7 +313,7 @@ def tone_heuristic(text: str) -> Dict:
     }
 
 
-def heading_audit(soup: BeautifulSoup) -> Dict:
+def heading_audit(soup: BeautifulSoup) -> Dict[str, Any]:
     headings = []
     for level in range(1, 7):
         for h in soup.find_all(f"h{level}"):
@@ -243,7 +326,7 @@ def heading_audit(soup: BeautifulSoup) -> Dict:
     return {"h_total": len(headings), "h1_count": h1, "h2_count": h2, "empty_headings": empty, "level_skips": skips}
 
 
-def internal_anchor_quality(soup: BeautifulSoup, base_domain: str) -> Dict:
+def internal_anchor_quality(soup: BeautifulSoup, base_domain: str) -> Dict[str, Any]:
     bad = {"click here", "read more", "learn more", "more", "here"}
     total = 0
     good = 0
@@ -257,7 +340,7 @@ def internal_anchor_quality(soup: BeautifulSoup, base_domain: str) -> Dict:
     return {"internal_total": total, "descriptive_ratio": round((good / total) if total else 1.0, 3)}
 
 
-def js_reliance_metrics(soup: BeautifulSoup, html_bytes: Optional[int]) -> Dict:
+def js_reliance_metrics(soup: BeautifulSoup, html_bytes: Optional[int]) -> Dict[str, Any]:
     scripts = soup.find_all("script")
     ext = sum(1 for s in scripts if s.get("src"))
     inline_chars = sum(len((s.string or "")) for s in scripts if not s.get("src"))
@@ -321,7 +404,7 @@ def score_images_alt(ratio: float) -> int:
     return int(round(ratio * 100))
 
 
-def score_tech(meta: Dict) -> int:
+def score_tech(meta: Dict[str, Any]) -> int:
     pts = 0
     total = 0
 
@@ -341,7 +424,7 @@ def score_tech(meta: Dict) -> int:
     return int(round((pts / max(total, 1)) * 100))
 
 
-def score_social(meta: Dict) -> int:
+def score_social(meta: Dict[str, Any]) -> int:
     pts = 0
     total = 0
 
@@ -357,7 +440,7 @@ def score_social(meta: Dict) -> int:
     return int(round((pts / max(total, 1)) * 100))
 
 
-def score_performance(meta: Dict) -> int:
+def score_performance(meta: Dict[str, Any]) -> int:
     psi_perf = meta.get("psi_scores", {}).get("performance")
     if psi_perf is not None:
         return int(psi_perf)
@@ -381,7 +464,7 @@ def score_readability(fre: Optional[float]) -> int:
     return int(max(0, 100 - (50 - fre) * 2))
 
 
-def score_originality(h: Dict) -> int:
+def score_originality(h: Dict[str, Any]) -> int:
     ttr = h.get("ttr", 0)
     rep = h.get("repeated_trigram_ratio", 0)
     s = 0
@@ -390,7 +473,7 @@ def score_originality(h: Dict) -> int:
     return int(max(0, min(100, s)))
 
 
-def score_tone(h: Dict) -> int:
+def score_tone(h: Dict[str, Any]) -> int:
     s = 100
     s -= min(30, h.get("exclamation_density", 0) * 60)
     s -= min(30, h.get("buzz_rate", 0) * 200)
@@ -399,7 +482,7 @@ def score_tone(h: Dict) -> int:
     return int(max(0, min(100, s)))
 
 
-def score_headings(h: Dict) -> int:
+def score_headings(h: Dict[str, Any]) -> int:
     s = 100
     if h.get("h1_count", 0) == 0:
         s -= 40
@@ -412,11 +495,11 @@ def score_headings(h: Dict) -> int:
     return int(max(0, min(100, s)))
 
 
-def score_internal_anchor_quality(aq: Dict) -> int:
+def score_internal_anchor_quality(aq: Dict[str, Any]) -> int:
     return int(round((aq.get("descriptive_ratio", 0) or 0) * 100))
 
 
-def score_js_reliance(js: Dict) -> int:
+def score_js_reliance(js: Dict[str, Any]) -> int:
     s = 100
     s -= min(40, max(0, js.get("script_count", 0) - 5) * 4)
     s -= min(20, max(0, js.get("external_script_count", 0) - 3) * 3)
@@ -426,8 +509,8 @@ def score_js_reliance(js: Dict) -> int:
     return int(max(0, min(100, s)))
 
 
-def compute_scores(meta: Dict) -> Dict:
-    scores = {}
+def compute_scores(meta: Dict[str, Any]) -> Dict[str, Any]:
+    scores: Dict[str, Any] = {}
     scores["score_title"] = score_title(meta.get("title_len", 0))
     scores["score_meta_desc"] = score_meta_desc(meta.get("meta_desc_len", 0))
     scores["score_h1"] = score_h1(meta.get("h1_count", 0))
@@ -444,6 +527,35 @@ def compute_scores(meta: Dict) -> Dict:
     scores["score_anchor_quality"] = score_internal_anchor_quality(meta.get("anchor_quality", {}))
     scores["score_js"] = score_js_reliance(meta.get("js_reliance", {}))
 
+    # Optional AI scores
+    ai_scores = meta.get("ai_scores")
+    ai_weight_map: Dict[str, float] = {}
+    if isinstance(ai_scores, dict) and ai_scores:
+        # clamp and include
+        def cv(x):
+            try:
+                return int(max(0, min(100, float(x))))
+            except Exception:
+                return 0
+        scores["score_ai_intent"] = cv(ai_scores.get("intent_match"))
+        scores["score_ai_coverage"] = cv(ai_scores.get("topical_coverage"))
+        scores["score_ai_eeat"] = cv(ai_scores.get("eeat"))
+        scores["score_ai_helpfulness"] = cv(ai_scores.get("helpfulness"))
+        scores["score_ai_originality"] = cv(ai_scores.get("originality_judgement"))
+        scores["score_ai_tone"] = cv(ai_scores.get("tone_fit"))
+        scores["score_ai_conversion"] = cv(ai_scores.get("conversion_copy"))
+        scores["score_ai_internal_links"] = cv(ai_scores.get("internal_link_opps"))
+        ai_weight_map = {
+            "score_ai_intent": 0.8,
+            "score_ai_coverage": 0.9,
+            "score_ai_eeat": 0.8,
+            "score_ai_helpfulness": 0.8,
+            "score_ai_originality": 0.6,
+            "score_ai_tone": 0.4,
+            "score_ai_conversion": 0.8,
+            "score_ai_internal_links": 0.5,
+        }
+
     weights = {
         "score_title": 1.0,
         "score_meta_desc": 0.9,
@@ -459,10 +571,11 @@ def compute_scores(meta: Dict) -> Dict:
         "score_heading_structure": 1.0,
         "score_anchor_quality": 0.7,
         "score_js": 0.9,
+        **ai_weight_map,
     }
     total_w = sum(weights.values())
-    overall = sum(scores[k] * w for k, w in weights.items())
-    scores["overall_score"] = int(round(overall / total_w))
+    overall = sum(scores[k] * w for k, w in weights.items() if k in scores)
+    scores["overall_score"] = int(round(overall / total_w)) if total_w else 0
     scores["_weights"] = weights
     return scores
 
@@ -485,10 +598,19 @@ RECS = {
     "score_heading_structure": "Fix heading hierarchy: one H1, use H2s for sections; avoid skipping levels or empty headings.",
     "score_anchor_quality": "Use descriptive anchor text for internal links (avoid ‘click here’/‘read more’).",
     "score_js": "Trim JavaScript: remove unused scripts, defer non-critical JS, and ensure core content is server-rendered.",
+    # AI-driven recs (labels map to score keys)
+    "score_ai_intent": "Ensure copy answers the primary search intent; add/clarify CTA and key actions.",
+    "score_ai_coverage": "Cover missing subtopics with dedicated H2/H3 sections and examples.",
+    "score_ai_eeat": "Expose author credentials, cite sources, add about/contact/policy and last-updated info.",
+    "score_ai_helpfulness": "Add step-by-step guidance, evidence, data, and illustrative examples.",
+    "score_ai_originality": "Add unique POV, proprietary data, or case studies to differentiate content.",
+    "score_ai_tone": "Align tone with brand (clear, confident, non-hypey); simplify jargon.",
+    "score_ai_conversion": "Sharpen value prop above the fold, add trust signals and specific CTAs.",
+    "score_ai_internal_links": "Add contextual internal links to related cornerstone pages with descriptive anchors.",
 }
 
 
-def generate_recommendations(r: Dict) -> List[str]:
+def generate_recommendations(r: Dict[str, Any]) -> List[str]:
     msgs: List[str] = []
     # Generic: any low score
     for key, msg in RECS.items():
@@ -514,13 +636,20 @@ def generate_recommendations(r: Dict) -> List[str]:
         msgs.append("High script count — audit and remove non-essential JS.")
     if js.get("text_to_html_ratio") is not None and js.get("text_to_html_ratio") < 0.15:
         msgs.append("Very low text-to-HTML ratio — core content may be thin or JS-reliant.")
+
+    # AI-specific suggestions
+    ai = r.get("ai_findings") or {}
+    for ms in ai.get("copy_suggestions", [])[:8]:
+        msgs.append(f"Copy: {ms}")
+    for ms in ai.get("schema_recommendations", [])[:5]:
+        msgs.append(f"Schema: Consider adding {ms} JSON-LD.")
     return msgs
 
 # ----------------------------- Analysis -----------------------------
 
-def analyze_page(url: str) -> Dict:
+def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = None) -> Dict[str, Any]:
     html, fetch_meta = get_home_html(url)
-    result = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
+    result: Dict[str, Any] = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
     result.update(fetch_meta)
 
     if fetch_meta.get("error") or not html:
@@ -588,9 +717,9 @@ def analyze_page(url: str) -> Dict:
     robots_meta = find_meta_tag(soup, name="robots") or ""
     is_noindex = "noindex" in robots_meta.lower()
 
-    # Performance / PSI (optional)
-    cwv = {}
-    psi_scores = {}
+    # PSI (optional)
+    cwv: Dict[str, Any] = {}
+    psi_scores: Dict[str, Any] = {}
     psi_key = os.environ.get("PSI_API_KEY")
     try:
         if psi_key:
@@ -653,9 +782,17 @@ def analyze_page(url: str) -> Dict:
         "js_reliance": js_meta,
     })
 
+    # AI analysis (optional)
+    if use_ai:
+        ai = ai_analyze_with_gemini(visible_text, topic_hint)
+        if ai:
+            result["ai_scores"] = ai.get("ai_scores")
+            result["ai_findings"] = ai.get("ai_findings")
+
+    # Compute sub-scores & overall
     result.update(compute_scores(result))
 
-    # Generate recommendations and issue count
+    # Recommendations
     recs = generate_recommendations(result)
     result["_recommendations"] = recs
     result["_issue_count"] = len(recs)
@@ -666,12 +803,19 @@ def analyze_page(url: str) -> Dict:
 st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide")
 
 st.title("🔎 SEO Audit & Competitor Comparator")
-st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, compares against competitors, and now suggests fixes.")
+st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, competitor comparison, and optional Gemini AI for semantic checks.")
 
 with st.sidebar:
     st.header("Settings")
     default_domain = st.text_input("Your domain or URL", placeholder="example.com or https://example.com")
     competitors = st.text_area("Competitors (one per line)", placeholder="competitor1.com\ncompetitor2.com")
+    st.subheader("AI (optional)")
+    use_ai = st.checkbox("Run AI analysis (Gemini)")
+    topic_hint = st.text_input("Topic/intent hint (optional)")
+    if use_ai and not _GENAI_AVAILABLE:
+        st.warning("google-generativeai not installed. Run: pip install google-generativeai")
+    if use_ai and not _get_gemini_key():
+        st.info("Set GEMINI_API_KEY or GOOGLE_API_KEY to enable AI analysis.")
     run_btn = st.button("Run audit", type="primary")
     st.divider()
     st.subheader("Google PSI API (optional)")
@@ -684,16 +828,16 @@ if run_btn and default_domain:
         if line:
             targets.append(normalize_url(line))
 
-    st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time and PSI.")
+    st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
 
-    results: List[Dict] = []
+    results: List[Dict[str, Any]] = []
 
     progress = st.progress(0.0)
     status = st.empty()
 
     for i, t in enumerate(targets, 1):
         status.write(f"Fetching: {t}")
-        res = analyze_page(t)
+        res = analyze_page(t, use_ai=use_ai, topic_hint=topic_hint)
         results.append(res)
         progress.progress(i / len(targets))
 
@@ -702,7 +846,7 @@ if run_btn and default_domain:
     # ----- Summary Table -----
     st.subheader("Summary")
 
-    def row_from(r: Dict) -> Dict:
+    def row_from(r: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "Domain": r.get("_domain"),
             "Final URL": r.get("_final_url"),
@@ -717,6 +861,7 @@ if run_btn and default_domain:
             "Social": r.get("score_social"),
             "Overall": r.get("overall_score"),
             "Issues": r.get("_issue_count"),
+            "AI?": "Yes" if r.get("ai_scores") else "No",
             "Error": r.get("error"),
         }
 
@@ -725,7 +870,7 @@ if run_btn and default_domain:
 
     # ----- Radar chart of category scores -----
     st.subheader("Category Radar")
-    cats = [
+    base_cats = [
         ("Title", "score_title"),
         ("Meta", "score_meta_desc"),
         ("H1", "score_h1"),
@@ -741,6 +886,18 @@ if run_btn and default_domain:
         ("Anchors", "score_anchor_quality"),
         ("JS Reliance", "score_js"),
     ]
+    ai_cats = [
+        ("AI Intent", "score_ai_intent"),
+        ("AI Coverage", "score_ai_coverage"),
+        ("AI E-E-A-T", "score_ai_eeat"),
+        ("AI Helpfulness", "score_ai_helpfulness"),
+        ("AI Originality", "score_ai_originality"),
+        ("AI Tone", "score_ai_tone"),
+        ("AI Conversion", "score_ai_conversion"),
+        ("AI Int. Links", "score_ai_internal_links"),
+    ] if any(r.get("ai_scores") for r in results) else []
+
+    cats = base_cats + ai_cats
 
     fig = go.Figure()
     theta = [c[0] for c in cats]
@@ -827,6 +984,22 @@ if run_btn and default_domain:
                     st.markdown("**Core Web Vitals (mobile)**")
                     st.write(r.get("cwv"))
 
+            if r.get("ai_scores"):
+                st.markdown("**AI Analysis (Gemini)**")
+                st.write(r.get("ai_scores"))
+                ai_f = r.get("ai_findings") or {}
+                if ai_f:
+                    if ai_f.get("missing_subtopics"):
+                        st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
+                    if ai_f.get("copy_suggestions"):
+                        st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
+                    if ai_f.get("schema_recommendations"):
+                        st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
+                    if ai_f.get("faq_suggestions"):
+                        st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
+                    if ai_f.get("internal_link_suggestions"):
+                        st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
+
             st.markdown("**Recommendations**")
             recs = r.get("_recommendations", [])
             if recs:
@@ -835,29 +1008,58 @@ if run_btn and default_domain:
             else:
                 st.write("No critical issues detected. Nice!")
 
-    # ----- Downloads -----
+     # ----- Downloads -----
     st.subheader("Export")
     json_blob = json.dumps(results, indent=2)
-    st.download_button("Download JSON", data=json_blob, file_name="seo_audit_results.json", mime="application/json")
+    st.download_button(
+        "Download JSON",
+        data=json_blob,
+        file_name="seo_audit_results.json",
+        mime="application/json"
+    )
 
     import csv
     import io
     csv_buf = io.StringIO()
     writer = csv.writer(csv_buf)
     header = [
-        "domain", "final_url", "overall", "title", "title_len", "meta_desc_len", "h1_count", "internal", "external", "img_alt_ratio", "tech", "perf", "social", "status", "load_ms", "page_bytes", "issues",
+        "domain", "final_url", "overall", "title", "title_len", "meta_desc_len",
+        "h1_count", "internal", "external", "img_alt_ratio", "tech", "perf",
+        "social", "status", "load_ms", "page_bytes", "issues", "ai"
     ]
     writer.writerow(header)
     for r in results:
         writer.writerow([
-            r.get("_domain"), r.get("_final_url"), r.get("overall_score"), r.get("title"), r.get("title_len"), r.get("meta_desc_len"),
-            r.get("h1_count"), r.get("internal_links"), r.get("external_links"), r.get("img_alt_ratio"), r.get("score_tech"),
-            r.get("score_performance"), r.get("score_social"), r.get("status_code"), r.get("elapsed_ms"), r.get("page_bytes"), r.get("_issue_count"),
+            r.get("_domain"),
+            r.get("_final_url"),
+            r.get("overall_score"),
+            r.get("title"),
+            r.get("title_len"),
+            r.get("meta_desc_len"),
+            r.get("h1_count"),
+            r.get("internal_links"),
+            r.get("external_links"),
+            r.get("img_alt_ratio"),
+            r.get("score_tech"),
+            r.get("score_performance"),
+            r.get("score_social"),
+            r.get("status_code"),
+            r.get("elapsed_ms"),
+            r.get("page_bytes"),
+            r.get("_issue_count"),
+            "Yes" if r.get("ai_scores") else "No",
         ])
-    st.download_button("Download CSV", data=csv_buf.getvalue(), file_name="seo_audit_results.csv", mime="text/csv")
+    st.download_button(
+        "Download CSV",
+        data=csv_buf.getvalue(),
+        file_name="seo_audit_results.csv",
+        mime="text/csv"
+    )
 
 else:
-    st.info("Enter your domain and any competitors, then click **Run audit**.")
+    st.info("Enter your domain and any competitors, choose AI if desired, then click **Run audit**.")
+```
+
 
 # ----------------------------- Notes -----------------------------
 # This is a lightweight checker focused on homepage-level signals. For crawling and JS-rendered content at scale,
