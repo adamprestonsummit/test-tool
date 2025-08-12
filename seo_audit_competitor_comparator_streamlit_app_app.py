@@ -1222,9 +1222,9 @@ if run_btn and default_domain:
         })
         st.write({"URL UK Keyword count (approx)": sm.get("url_keywords_uk")})
 
-if r.get("keyword_research"):
-    st.markdown("**AI Keyword Research + Volumes (UK)**")
-    st.dataframe(r["keyword_research"], use_container_width=True)
+    if r.get("keyword_research"):
+        st.markdown("**AI Keyword Research + Volumes (UK)**")
+        st.dataframe(r["keyword_research"], use_container_width=True)
 
 
      # ----- Downloads -----
