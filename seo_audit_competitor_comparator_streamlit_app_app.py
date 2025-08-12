@@ -1200,6 +1200,33 @@ if run_btn and default_domain:
             else:
                 st.write("No critical issues detected. Nice!")
 
+    if r.get("semrush"):
+    st.markdown("**Semrush Insights**")
+    sm = r["semrush"]
+
+    colA, colB = st.columns(2)
+    with colA:
+        st.write({"Backlinks (domain)": sm.get("backlinks_domain")})
+        st.write({"Ref domains (domain)": sm.get("refdomains_domain_count")})
+        st.write({"Backlinks (URL)": sm.get("backlinks_url")})
+        st.write({"Ref domains (URL)": sm.get("refdomains_url_count")})
+
+    with colB:
+        dom = sm.get("domain_organic_uk") or {}
+        st.write({
+            "UK Organic keywords": dom.get("Or"),
+            "UK Organic traffic": dom.get("Ot"),
+            "MoM % (KW/Traffic)": (dom.get("Or_mom_%"), dom.get("Ot_mom_%")),
+            "YoY % (KW/Traffic)": (dom.get("Or_yoy_%"), dom.get("Ot_yoy_%")),
+            "Periods (this/mom/yoy)": dom.get("_dates"),
+        })
+        st.write({"URL UK Keyword count (approx)": sm.get("url_keywords_uk")})
+
+if r.get("keyword_research"):
+    st.markdown("**AI Keyword Research + Volumes (UK)**")
+    st.dataframe(r["keyword_research"], use_container_width=True)
+
+
      # ----- Downloads -----
     st.subheader("Export")
     json_blob = json.dumps(results, indent=2)
