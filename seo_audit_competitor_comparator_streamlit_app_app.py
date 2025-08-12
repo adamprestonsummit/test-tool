@@ -1257,7 +1257,7 @@ ai_cats = [
         ("AI Int. Links", "score_ai_internal_links"),
     ] if any(r.get("ai_scores") for r in results) else []
 
-    cats = base_cats + ai_cats
+cats = base_cats + ai_cats
 
     fig = go.Figure()
     theta = [c[0] for c in cats]
