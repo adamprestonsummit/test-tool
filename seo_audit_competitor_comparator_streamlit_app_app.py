@@ -176,11 +176,13 @@ def has_sitemap(domain_url: str, hinted_sitemaps: List[str]) -> bool:
 # ----------------------------- AI (Gemini) Helpers -----------------------------
 
 def _get_gemini_key() -> Optional[str]:
-    for k in AI_ENV_VARS:
-        v = os.environ.get(k)
-        if v:
-            return v
-    return None
+    # Prefer env vars if set, else fall back to Streamlit secrets
+    return (
+        os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or (st.secrets.get("GEMINI_API_KEY") if hasattr(st, "secrets") else None)
+        or (st.secrets.get("GOOGLE_API_KEY") if hasattr(st, "secrets") else None)
+    )
 
 
 def ai_analyze_with_gemini(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30) -> Optional[Dict[str, Any]]:
@@ -815,11 +817,14 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = Non
     })
 
     # AI analysis (optional)
-    if use_ai:
-        ai = ai_analyze_with_gemini(visible_text, topic_hint)
-        if ai:
-            result["ai_scores"] = ai.get("ai_scores")
-            result["ai_findings"] = ai.get("ai_findings")
+if use_ai:
+    ai = ai_analyze_with_gemini(visible_text, topic_hint)
+    if ai:
+        result["ai_scores"] = ai.get("ai_scores")
+        result["ai_findings"] = ai.get("ai_findings")
+    else:
+        # Optional: surface a debug message while you're testing
+        result["_ai_error"] = "Gemini returned no result (check key/quotas)."
 
     # Compute sub-scores & overall
     result.update(compute_scores(result))
@@ -852,6 +857,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Google PSI API (optional)")
     st.write("Set environment var `PSI_API_KEY` before running for Core Web Vitals + Lighthouse scores.")
+  
 
 if run_btn and default_domain:
     targets = [normalize_url(default_domain)]
@@ -1031,6 +1037,8 @@ if run_btn and default_domain:
                         st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
                     if ai_f.get("internal_link_suggestions"):
                         st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
+            elif r.get("_ai_error"):
+                        st.info(f"AI note: {r['_ai_error']}")
 
             st.markdown("**Recommendations**")
             recs = r.get("_recommendations", [])
