@@ -1269,7 +1269,7 @@ for r in results:
 
     # ----- Overall score bar chart -----
     st.subheader("Overall Score Comparison")
-    fig2 = px.bar(
+        fig2 = px.bar(
         x=[r.get("_domain") for r in results],
         y=[r.get("overall_score") for r in results],
         color=[r.get("_domain") for r in results],
