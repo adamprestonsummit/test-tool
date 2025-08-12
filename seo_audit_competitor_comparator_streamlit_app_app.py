@@ -1228,129 +1228,204 @@ st.download_button(
 )
 
 
-   # ----- Radar chart -----
-cats = base_cats + ai_cats
-fig = go.Figure()
-theta = [c[0] for c in cats]
+# =======================
+# DISPLAY RESULTS SECTION
+# =======================
 
-for r in results:
-    vals = [r.get(c[1], 0) for c in cats]
-    fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
+if run_btn and default_domain:
+    results = []  # make sure this is defined before you start filling it
 
-fig.update_layout(
-    polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-    showlegend=True,
-    height=520
-)
-st.plotly_chart(fig, use_container_width=True)
+    # ---- Collect audit results ----
+    targets = [normalize_url(default_domain)]
+    for line in (competitors or "").splitlines():
+        line = line.strip()
+        if line:
+            targets.append(normalize_url(line))
 
-# ----- Overall score bar chart -----
-st.subheader("Overall Score Comparison")
-fig2 = px.bar(
-    x=[r.get("_domain") for r in results],
-    y=[r.get("overall_score") for r in results],
-    color=[r.get("_domain") for r in results],
-    color_discrete_sequence=px.colors.qualitative.Set2,
-    labels={"x": "Domain", "y": "Overall Score"},
-    text=[r.get("overall_score") for r in results],
-)
-fig2.update_traces(textposition="outside")
-fig2.update_yaxes(range=[0, 100])
-st.plotly_chart(fig2, use_container_width=True)
+    st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
 
-# Only show this section if results exist
-if results:
+    progress = st.progress(0.0)
+    status = st.empty()
+
+    for i, t in enumerate(targets, start=1):
+        status.write(f"Fetching: {t}")
+        res = analyze_page(
+            t,
+            use_ai=use_ai,
+            topic_hint=topic_hint,
+            show_ai_debug=show_ai_debug,
+        )
+
+        # Optional Semrush extras
+        if use_semrush:
+            domain = res.get("_domain")
+            final_url = res.get("_final_url") or res.get("_url")
+
+            # Backlinks
+            bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
+            bl_url = semrush_backlinks_overview(final_url, "url") or {}
+            rd_dom_count = semrush_refdomains_count(domain, "root_domain")
+            rd_url_count = semrush_refdomains_count(final_url, "url")
+
+            # Organic traffic changes
+            dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
+
+            # URL keyword count
+            url_kw_count = semrush_url_keywords_count(final_url, "uk")
+
+            res["semrush"] = {
+                "backlinks_domain": bl_dom,
+                "backlinks_url": bl_url,
+                "refdomains_domain_count": rd_dom_count,
+                "refdomains_url_count": rd_url_count,
+                "domain_organic_uk": dom_ov,
+                "url_keywords_uk": url_kw_count,
+            }
+
+        # Optional: keyword research
+        if topic_hint:
+            res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
+
+        results.append(res)
+        progress.progress(i / len(targets))
+
+    status.write("Done.")
+
+    # =====================
+    # CHARTS & VISUALISATION
+    # =====================
+
+    base_cats = [
+        ("Performance", "perf_score"),
+        ("Accessibility", "access_score"),
+        ("Best Practices", "bp_score"),
+        ("SEO", "seo_score"),
+    ]
+    ai_cats = [("AI Quality", "ai_quality_score")] if use_ai else []
+    cats = base_cats + ai_cats
+
+    # Radar chart
+    fig = go.Figure()
+    theta = [c[0] for c in cats]
+    for r in results:
+        vals = [r.get(c[1], 0) for c in cats]
+        fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=True,
+        height=520
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Bar chart
+    st.subheader("Overall Score Comparison")
+    fig2 = px.bar(
+        x=[r.get("_domain") for r in results],
+        y=[r.get("overall_score") for r in results],
+        color=[r.get("_domain") for r in results],
+        color_discrete_sequence=px.colors.qualitative.Set2,
+        labels={"x": "Domain", "y": "Overall Score"},
+        text=[r.get("overall_score") for r in results],
+    )
+    fig2.update_traces(textposition="outside")
+    fig2.update_yaxes(range=[0, 100])
+    st.plotly_chart(fig2, use_container_width=True)
+
+    # =====================
+    # DETAILS PER SITE
+    # =====================
     st.subheader("Details by Site")
-    for res in results:
-        with st.expander(f"{res.get('_domain')} — details"):
+    for r in results:
+        with st.expander(f"{r.get('_domain')} — details"):
             col1, col2 = st.columns(2)
             with col1:
                 st.markdown("**Basics**")
                 st.write({
-                    "Final URL": res.get("_final_url"),
-                    "Status": res.get("status_code"),
-                    "HTTPS": res.get("https"),
-                    "Redirects": res.get("redirects"),
-                    "Load (ms)": res.get("elapsed_ms"),
-                    "HTML bytes": res.get("page_bytes"),
-                    "Noindex": res.get("noindex"),
+                    "Final URL": r.get("_final_url"),
+                    "Status": r.get("status_code"),
+                    "HTTPS": r.get("https"),
+                    "Redirects": r.get("redirects"),
+                    "Load (ms)": r.get("elapsed_ms"),
+                    "HTML bytes": r.get("page_bytes"),
+                    "Noindex": r.get("noindex"),
                 })
                 st.markdown("**On-page**")
                 st.write({
-                    "Title": res.get("title"),
-                    "Title length": res.get("title_len"),
-                    "Meta desc length": res.get("meta_desc_len"),
-                    "H1 count": res.get("h1_count"),
-                    "Canonical": res.get("canonical"),
+                    "Title": r.get("title"),
+                    "Title length": r.get("title_len"),
+                    "Meta desc length": r.get("meta_desc_len"),
+                    "H1 count": r.get("h1_count"),
+                    "Canonical": r.get("canonical"),
                 })
                 st.markdown("**Content Quality**")
                 st.write({
-                    "Flesch Reading Ease": res.get("readability_fre"),
-                    "Originality (TTR)": res.get("originality", {}).get("ttr"),
-                    "Repeated 3-grams": res.get("originality", {}).get("repeated_trigram_ratio"),
-                    "Tone (exclam/100sents)": res.get("tone", {}).get("exclamation_density"),
-                    "Tone (buzz rate)": res.get("tone", {}).get("buzz_rate"),
+                    "Flesch Reading Ease": r.get("readability_fre"),
+                    "Originality (TTR)": r.get("originality", {}).get("ttr"),
+                    "Repeated 3-grams": r.get("originality", {}).get("repeated_trigram_ratio"),
+                    "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
+                    "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
                 })
                 st.markdown("**Content Stats**")
                 st.write({
-                    "Links (internal/external)": f"{res.get('internal_links')}/{res.get('external_links')}",
-                    "Images": res.get("images"),
-                    "Alt ratio": res.get("img_alt_ratio"),
+                    "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
+                    "Images": r.get("images"),
+                    "Alt ratio": r.get("img_alt_ratio"),
                 })
             with col2:
                 st.markdown("**Headings**")
-                st.write(res.get("headings"))
+                st.write(r.get("headings"))
                 st.markdown("**Internal Link Anchors**")
-                st.write(res.get("anchor_quality"))
+                st.write(r.get("anchor_quality"))
                 st.markdown("**JS Reliance**")
-                st.write(res.get("js_reliance"))
+                st.write(r.get("js_reliance"))
                 st.markdown("**Robots/Sitemap**")
                 st.write({
-                    "robots.txt": res.get("robots_exists"),
-                    "sitemap": res.get("sitemap_exists"),
+                    "robots.txt": r.get("robots_exists"),
+                    "sitemap": r.get("sitemap_exists"),
                 })
                 st.markdown("**Social/Schema**")
                 st.write({
-                    "Open Graph": res.get("og_present"),
-                    "Twitter Cards": res.get("twitter_present"),
-                    "JSON-LD schema": res.get("schema_jsonld"),
+                    "Open Graph": r.get("og_present"),
+                    "Twitter Cards": r.get("twitter_present"),
+                    "JSON-LD schema": r.get("schema_jsonld"),
                 })
-                if res.get("psi_scores"):
+                if r.get("psi_scores"):
                     st.markdown("**Lighthouse Categories (mobile)**")
-                    st.write(res.get("psi_scores"))
-                if res.get("cwv"):
+                    st.write(r.get("psi_scores"))
+                if r.get("cwv"):
                     st.markdown("**Core Web Vitals (mobile)**")
-                    st.write(res.get("cwv"))
+                    st.write(r.get("cwv"))
 
-        if res.get("ai_scores"):
-            st.markdown("**AI Analysis**")
-            st.write(res.get("ai_scores"))
-            ai_f = res.get("ai_findings") or {}
-            if ai_f:
-                if ai_f.get("missing_subtopics"):
-                    st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
-                if ai_f.get("copy_suggestions"):
-                    st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
-                if ai_f.get("schema_recommendations"):
-                    st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
-                if ai_f.get("faq_suggestions"):
-                    st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
-                if ai_f.get("internal_link_suggestions"):
-                    st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
-        elif res.get("_ai_error"):
-            st.info(f"AI note: {res['_ai_error']}")
+            if r.get("ai_scores"):
+                st.markdown("**AI Analysis **")
+                st.write(r.get("ai_scores"))
+                ai_f = r.get("ai_findings") or {}
+                if ai_f:
+                    if ai_f.get("missing_subtopics"):
+                        st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
+                    if ai_f.get("copy_suggestions"):
+                        st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
+                    if ai_f.get("schema_recommendations"):
+                        st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
+                    if ai_f.get("faq_suggestions"):
+                        st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
+                    if ai_f.get("internal_link_suggestions"):
+                        st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
+            elif r.get("_ai_error"):
+                st.info(f"AI note: {r['_ai_error']}")
 
-        st.markdown("**Recommendations**")
-        recs = res.get("_recommendations", [])
-        if recs:
-            for m in recs:
-                st.write("• ", m)
-        else:
-            st.write("No critical issues detected. Nice!")
+            st.markdown("**Recommendations**")
+            recs = r.get("_recommendations", [])
+            if recs:
+                for m in recs:
+                    st.write("• ", m)
+            else:
+                st.write("No critical issues detected. Nice!")
 
-        if res.get("keyword_research"):
-            st.markdown("**AI Keyword Research + Volumes (UK)**")
-            st.dataframe(res["keyword_research"], use_container_width=True)
+            if r.get("keyword_research"):
+                st.markdown("**AI Keyword Research + Volumes (UK)**")
+                st.dataframe(r["keyword_research"], use_container_width=True)
+
 
 
 
