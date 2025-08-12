@@ -1136,13 +1136,39 @@ if run_btn and default_domain:
 # Only display charts and site details if we have results
 if results:
     # ----- Radar chart -----
+ # ----- Only proceed if results exist -----
+if results and isinstance(results, list):
+
+    # Define base categories for radar chart
+    base_cats = [
+        ("Performance", "performance_score"),
+        ("Accessibility", "accessibility_score"),
+        ("Best Practices", "best_practices_score"),
+        ("SEO", "seo_score"),
+    ]
+
+    # Add AI categories only if AI data exists
+    ai_cats = []
+    if any(r.get("ai_scores") for r in results):
+        ai_cats = [
+            ("Content Depth", "content_depth_score"),
+            ("Entity Coverage", "entity_coverage_score"),
+        ]
+
+    # Combine category sets
     cats = base_cats + ai_cats
+
+    # ----- Radar Chart -----
     fig = go.Figure()
     theta = [c[0] for c in cats]
     for r in results:
         vals = [r.get(c[1], 0) for c in cats]
         fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
-    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
+        showlegend=True,
+        height=520
+    )
     st.plotly_chart(fig, use_container_width=True)
 
     # ----- Overall score bar chart -----
@@ -1159,11 +1185,12 @@ if results:
     fig2.update_yaxes(range=[0, 100])
     st.plotly_chart(fig2, use_container_width=True)
 
-    # ----- Details by Site -----
+    # ----- Detail expanders -----
     st.subheader("Details by Site")
     for r in results:
         with st.expander(f"{r.get('_domain')} — details"):
             col1, col2 = st.columns(2)
+
             with col1:
                 st.markdown("**Basics**")
                 st.write({
@@ -1175,6 +1202,7 @@ if results:
                     "HTML bytes": r.get("page_bytes"),
                     "Noindex": r.get("noindex"),
                 })
+
                 st.markdown("**On-page**")
                 st.write({
                     "Title": r.get("title"),
@@ -1183,6 +1211,7 @@ if results:
                     "H1 count": r.get("h1_count"),
                     "Canonical": r.get("canonical"),
                 })
+
                 st.markdown("**Content Quality**")
                 st.write({
                     "Flesch Reading Ease": r.get("readability_fre"),
@@ -1191,12 +1220,14 @@ if results:
                     "Tone (exclam/100sents)": r.get("tone", {}).get("exclamation_density"),
                     "Tone (buzz rate)": r.get("tone", {}).get("buzz_rate"),
                 })
+
                 st.markdown("**Content Stats**")
                 st.write({
                     "Links (internal/external)": f"{r.get('internal_links')}/{r.get('external_links')}",
                     "Images": r.get("images"),
                     "Alt ratio": r.get("img_alt_ratio"),
                 })
+
             with col2:
                 st.markdown("**Headings**")
                 st.write(r.get("headings"))
@@ -1222,8 +1253,23 @@ if results:
                     st.markdown("**Core Web Vitals (mobile)**")
                     st.write(r.get("cwv"))
 
+            # ----- Semrush metrics -----
+            if r.get("semrush"):
+                sm = r["semrush"]
+                st.markdown("**Semrush Insights**")
+                st.write({
+                    "Backlinks (domain)": sm.get("backlinks_domain", {}).get("backlinks", "n/a"),
+                    "Backlinks (URL)": sm.get("backlinks_url", {}).get("backlinks", "n/a"),
+                    "Referring domains (domain)": sm.get("refdomains_domain_count", "n/a"),
+                    "Referring domains (URL)": sm.get("refdomains_url_count", "n/a"),
+                    "Authority Score": sm.get("backlinks_domain", {}).get("authority_score", "n/a"),
+                    "Organic traffic UK (MoM/YoY)": sm.get("domain_organic_uk", {}),
+                    "Keyword count UK (URL)": sm.get("url_keywords_uk", "n/a"),
+                })
+
+            # ----- AI Insights -----
             if r.get("ai_scores"):
-                st.markdown("**AI Analysis **")
+                st.markdown("**AI Analysis**")
                 st.write(r.get("ai_scores"))
                 ai_f = r.get("ai_findings") or {}
                 if ai_f:
@@ -1240,6 +1286,7 @@ if results:
             elif r.get("_ai_error"):
                 st.info(f"AI note: {r['_ai_error']}")
 
+            # ----- Recommendations -----
             st.markdown("**Recommendations**")
             recs = r.get("_recommendations", [])
             if recs:
@@ -1248,9 +1295,13 @@ if results:
             else:
                 st.write("No critical issues detected. Nice!")
 
-        if r.get("keyword_research"):
-            st.markdown("**AI Keyword Research + Volumes (UK)**")
-            st.dataframe(r["keyword_research"], use_container_width=True)
+            # ----- Keyword research -----
+            if r.get("keyword_research"):
+                st.markdown("**AI Keyword Research + Volumes (UK)**")
+                st.dataframe(r["keyword_research"], use_container_width=True)
+
+else:
+    st.warning("No results to display yet. Please run an audit first.")
 
 
 
