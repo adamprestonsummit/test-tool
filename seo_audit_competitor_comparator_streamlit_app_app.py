@@ -868,9 +868,9 @@ with st.sidebar:
     run_btn = st.button("Run audit", type="primary")
     st.divider()
     st.subheader("AI Analysis")
-        provider   = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
-        use_ai     = provider != "Off"
-        topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
+    provider   = st.selectbox("AI provider", ["OpenAI (ChatGPT)", "Off"], index=0, key="ai_provider")
+    use_ai     = provider != "Off"
+    topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
 
 # Optional: run button with a key too (avoids clashes if there's another button elsewhere)
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
