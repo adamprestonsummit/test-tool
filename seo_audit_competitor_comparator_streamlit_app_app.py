@@ -305,6 +305,57 @@ def months_ago(anchor: date, n: int) -> date:
     m = (anchor.month - 1 - n) % 12 + 1
     return date(y, m, 1)
 
+def ai_suggest_keywords(topic_hint: str, n: int = 30) -> list[str]:
+    """
+    Uses your existing OpenAI setup to propose seed keywords.
+    Keep it simple + cheap; return a flat list of strings.
+    """
+    if not topic_hint:
+        return []
+    prompt = (
+        f"Generate a flat list of up to {n} UK English search keywords for the topic: {topic_hint}.\n"
+        "Mix head, mid, and long-tail. Return one per line, no numbering."
+    )
+    # Reuse your OpenAI call (chat completions) here to keep code DRY
+    api_key = os.environ.get("OPENAI_API_KEY") or (st.secrets.get("OPENAI_API_KEY") if hasattr(st, "secrets") else None)
+    if not api_key:
+        return []
+
+    try:
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": "You are a concise SEO keyword ideation assistant."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.4
+            },
+            timeout=30
+        )
+        if resp.status_code != 200:
+            return []
+        text = (resp.json().get("choices", [{}])[0].get("message", {}) or {}).get("content", "") or ""
+        kws = [ln.strip("-• ").strip() for ln in text.splitlines() if ln.strip()]
+        # de-dupe and trim
+        seen, out = set(), []
+        for k in kws:
+            k_low = k.lower()
+            if k_low not in seen:
+                seen.add(k_low); out.append(k)
+        return out[:n]
+    except Exception:
+        return []
+
+def keyword_research_with_volumes(topic_hint: str, database: str = "uk") -> list[dict] | None:
+    seeds = ai_suggest_keywords(topic_hint, n=30)
+    if not seeds:
+        return None
+    vols = semrush_keyword_volumes(seeds, database=database) or []
+    return vols
+
 # ---------- Specific wrappers (common reports) ----------
 
 def semrush_backlinks_overview(target: str, target_type: str = "root_domain") -> dict | None:
