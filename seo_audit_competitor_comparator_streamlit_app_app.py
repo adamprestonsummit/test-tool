@@ -1258,6 +1258,9 @@ fig2.update_traces(textposition="outside")
 fig2.update_yaxes(range=[0, 100])
 st.plotly_chart(fig2, use_container_width=True)
 
+if 'results' in locals() and results:
+    for res in results:
+
 # ----- Detail expanders -----
 st.subheader("Details by Site")
 for r in results:
