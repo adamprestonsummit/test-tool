@@ -1268,7 +1268,7 @@ for r in results:
         st.plotly_chart(fig, use_container_width=True)
 
     # ----- Overall score bar chart -----
-    st.subheader("Overall Score Comparison")
+        st.subheader("Overall Score Comparison")
         fig2 = px.bar(
         x=[r.get("_domain") for r in results],
         y=[r.get("overall_score") for r in results],
