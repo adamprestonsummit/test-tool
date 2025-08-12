@@ -865,7 +865,13 @@ def generate_recommendations(r: Dict[str, Any]) -> List[str]:
 
 # ----------------------------- Analysis -----------------------------
 
-def analyze_page(url: str, use_ai: bool = False, topic_hint: Optional[str] = None) -> Dict[str, Any]:
+from typing import Any  # make sure Any is imported
+def analyze_page(
+    url: str,
+    use_ai: bool = False,
+    topic_hint: Optional[str] = None,
+    show_ai_debug: bool = False,     # <-- add this
+) -> Dict[str, Any]:
     html, fetch_meta = get_home_html(url)
     result: Dict[str, Any] = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
     result.update(fetch_meta)
@@ -1085,6 +1091,16 @@ if run_btn and default_domain:
             topic_hint=topic_hint,
             show_ai_debug=show_ai_debug,
         )
+
+        # AI analysis (optional)
+if use_ai:
+    ai = ai_analyze_with_openai(visible_text, topic_hint, debug=show_ai_debug)
+    if ai:
+        result["ai_scores"] = ai.get("ai_scores")
+        result["ai_findings"] = ai.get("ai_findings")
+    else:
+        result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
+
 
         # Semrush extras (optional)
         if use_semrush:
