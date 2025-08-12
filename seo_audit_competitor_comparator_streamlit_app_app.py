@@ -1246,7 +1246,7 @@ base_cats = [
         ("Anchors", "score_anchor_quality"),
         ("JS Reliance", "score_js"),
     ]
-    ai_cats = [
+ai_cats = [
         ("AI Intent", "score_ai_intent"),
         ("AI Coverage", "score_ai_coverage"),
         ("AI E-E-A-T", "score_ai_eeat"),
