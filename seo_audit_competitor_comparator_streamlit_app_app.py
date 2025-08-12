@@ -1077,165 +1077,12 @@ if run_btn and default_domain:
 
     st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
 
-    results: List[Dict[str, Any]] = []
-    progress = st.progress(0.0)
-    status = st.empty()
+   # Always initialize results
+results: List[Dict[str, Any]] = []
 
-    for i, t in enumerate(targets, start=1):
-        status.write(f"Fetching: {t}")
-
-        # Core page analysis (includes AI if enabled)
-        res = analyze_page(
-            t,
-            use_ai=use_ai,
-            topic_hint=topic_hint,
-            show_ai_debug=show_ai_debug,
-        )
-
-        
-        # Semrush extras (optional)
-        if use_semrush:
-            domain = res.get("_domain")
-            final_url = res.get("_final_url") or res.get("_url")
-
-            # Backlinks & ref domains
-            bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
-            bl_url = semrush_backlinks_overview(final_url, "url") or {}
-            rd_dom_count = semrush_refdomains_count(domain, "root_domain")
-            rd_url_count = semrush_refdomains_count(final_url, "url")
-
-            # Domain organic metrics (UK) with MoM/YoY deltas
-            dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
-
-            # URL-level keyword count (UK)
-            url_kw_count = semrush_url_keywords_count(final_url, "uk")
-
-            res["semrush"] = {
-                "backlinks_domain": bl_dom,
-                "backlinks_url": bl_url,
-                "refdomains_domain_count": rd_dom_count,
-                "refdomains_url_count": rd_url_count,
-                "domain_organic_uk": dom_ov,
-                "url_keywords_uk": url_kw_count,
-            }
-
-            # AI → Semrush volumes for suggested keywords (if you provided a hint)
-            if topic_hint:
-                res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
-
-        results.append(res)
-        progress.progress(i / len(targets))
-
-    status.write("Done.")
-    # ↓ Keep your Summary / Radar / Details / Downloads sections after this
-
-   # ------------------------ SUMMARY TABLE ------------------------
-import pandas as pd
-
-# Flatten results into a list of dicts for DataFrame
-flat_results = []
-for res in results:
-    row = {
-        "Domain": res.get("_domain"),
-        "Final URL": res.get("_final_url") or res.get("_url"),
-        "HTTP": res.get("http_status"),
-        "Load (ms)": res.get("load_time_ms"),
-        "Title len": res.get("title_length"),
-        "Meta len": res.get("meta_length"),
-        "H1s": res.get("h1_count"),
-        "Alt %": res.get("alt_text_percent"),
-        "Tech": res.get("tech_score"),
-        "Perf": res.get("perf_score"),
-        "Social": res.get("social_score"),
-        "Overall": res.get("overall_score"),
-    }
-
-    # Semrush metrics if available
-    sm = res.get("semrush", {})
-    row.update({
-        "BL_dom": sm.get("backlinks_domain", {}).get("backlinks", "N/A"),
-        "BL_url": sm.get("backlinks_url", {}).get("backlinks", "N/A"),
-        "RD_dom": sm.get("refdomains_domain_count", "N/A"),
-        "RD_url": sm.get("refdomains_url_count", "N/A"),
-        "OrgTraffic_UK": sm.get("domain_organic_uk", {}).get("traffic", "N/A"),
-        "MoM_UK": sm.get("domain_organic_uk", {}).get("mom_change", "N/A"),
-        "YoY_UK": sm.get("domain_organic_uk", {}).get("yoy_change", "N/A"),
-        "KW_url_UK": sm.get("url_keywords_uk", "N/A"),
-    })
-
-    flat_results.append(row)
-
-df_summary = pd.DataFrame(flat_results)
-
-# Rename columns for display
-df_summary.rename(columns={
-    "BL_dom": "Backlinks (Domain)",
-    "BL_url": "Backlinks (URL)",
-    "RD_dom": "Ref Domains (Domain)",
-    "RD_url": "Ref Domains (URL)",
-    "OrgTraffic_UK": "Organic Traffic UK",
-    "MoM_UK": "MoM Change UK",
-    "YoY_UK": "YoY Change UK",
-    "KW_url_UK": "Keywords (URL, UK)"
-}, inplace=True)
-
-# Highlight function for Semrush metrics
-def highlight_values(val, higher_is_better=True):
-    if val == "N/A" or val is None:
-        return ""
-    try:
-        val = float(val)
-    except:
-        return ""
-    if higher_is_better:
-        if val > 1000:
-            return "background-color: #4caf50; color: white;"  # green strong
-        elif val > 500:
-            return "background-color: #c8e6c9;"  # light green
-        else:
-            return "background-color: #ffcdd2;"  # light red
-    else:
-        # For MoM/YoY where higher positive % is better
-        if val > 0:
-            return "background-color: #4caf50; color: white;"
-        elif val > -5:
-            return "background-color: #fff9c4;"  # yellow neutral
-        else:
-            return "background-color: #ffcdd2;"  # red negative
-
-# Apply highlighting selectively
-semrush_cols_high = [
-    "Backlinks (Domain)", "Backlinks (URL)",
-    "Ref Domains (Domain)", "Ref Domains (URL)",
-    "Organic Traffic UK", "Keywords (URL, UK)"
-]
-semrush_cols_percent = ["MoM Change UK", "YoY Change UK"]
-
-styled_df = df_summary.style.applymap(lambda v: highlight_values(v, True), subset=semrush_cols_high)
-styled_df = styled_df.applymap(lambda v: highlight_values(v, False), subset=semrush_cols_percent)
-
-# Display
-st.subheader("Summary")
-st.dataframe(styled_df, use_container_width=True)
-
-# Optional CSV download
-csv = df_summary.to_csv(index=False).encode("utf-8")
-st.download_button(
-    label="Download Summary CSV",
-    data=csv,
-    file_name="seo_audit_summary.csv",
-    mime="text/csv",
-)
-
-
-# =======================
-# DISPLAY RESULTS SECTION
-# =======================
-
+# Run the audit only when the button is clicked
 if run_btn and default_domain:
-    results = []  # make sure this is defined before you start filling it
-
-    # ---- Collect audit results ----
+    # Build targets list
     targets = [normalize_url(default_domain)]
     for line in (competitors or "").splitlines():
         line = line.strip()
@@ -1243,12 +1090,13 @@ if run_btn and default_domain:
             targets.append(normalize_url(line))
 
     st.info(f"Auditing {len(targets)} site(s). This may take ~5–30s each depending on response time, PSI, and AI.")
-
     progress = st.progress(0.0)
     status = st.empty()
 
     for i, t in enumerate(targets, start=1):
         status.write(f"Fetching: {t}")
+
+        # Core page analysis (AI if enabled)
         res = analyze_page(
             t,
             use_ai=use_ai,
@@ -1256,21 +1104,16 @@ if run_btn and default_domain:
             show_ai_debug=show_ai_debug,
         )
 
-        # Optional Semrush extras
+        # Optional Semrush data
         if use_semrush:
             domain = res.get("_domain")
             final_url = res.get("_final_url") or res.get("_url")
 
-            # Backlinks
             bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
             bl_url = semrush_backlinks_overview(final_url, "url") or {}
             rd_dom_count = semrush_refdomains_count(domain, "root_domain")
             rd_url_count = semrush_refdomains_count(final_url, "url")
-
-            # Organic traffic changes
             dom_ov = semrush_domain_mom_yoy(domain, "uk") or {}
-
-            # URL keyword count
             url_kw_count = semrush_url_keywords_count(final_url, "uk")
 
             res["semrush"] = {
@@ -1282,42 +1125,27 @@ if run_btn and default_domain:
                 "url_keywords_uk": url_kw_count,
             }
 
-        # Optional: keyword research
-        if topic_hint:
-            res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
+            if topic_hint:
+                res["keyword_research"] = keyword_research_with_volumes(topic_hint, "uk")
 
         results.append(res)
         progress.progress(i / len(targets))
 
     status.write("Done.")
 
-    # =====================
-    # CHARTS & VISUALISATION
-    # =====================
-
-    base_cats = [
-        ("Performance", "perf_score"),
-        ("Accessibility", "access_score"),
-        ("Best Practices", "bp_score"),
-        ("SEO", "seo_score"),
-    ]
-    ai_cats = [("AI Quality", "ai_quality_score")] if use_ai else []
+# Only display charts and site details if we have results
+if results:
+    # ----- Radar chart -----
     cats = base_cats + ai_cats
-
-    # Radar chart
     fig = go.Figure()
     theta = [c[0] for c in cats]
     for r in results:
         vals = [r.get(c[1], 0) for c in cats]
         fig.add_trace(go.Scatterpolar(r=vals, theta=theta, fill='toself', name=r.get("_domain")))
-    fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=[0, 100])),
-        showlegend=True,
-        height=520
-    )
+    fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 100])), showlegend=True, height=520)
     st.plotly_chart(fig, use_container_width=True)
 
-    # Bar chart
+    # ----- Overall score bar chart -----
     st.subheader("Overall Score Comparison")
     fig2 = px.bar(
         x=[r.get("_domain") for r in results],
@@ -1331,9 +1159,7 @@ if run_btn and default_domain:
     fig2.update_yaxes(range=[0, 100])
     st.plotly_chart(fig2, use_container_width=True)
 
-    # =====================
-    # DETAILS PER SITE
-    # =====================
+    # ----- Details by Site -----
     st.subheader("Details by Site")
     for r in results:
         with st.expander(f"{r.get('_domain')} — details"):
@@ -1422,11 +1248,9 @@ if run_btn and default_domain:
             else:
                 st.write("No critical issues detected. Nice!")
 
-            if r.get("keyword_research"):
-                st.markdown("**AI Keyword Research + Volumes (UK)**")
-                st.dataframe(r["keyword_research"], use_container_width=True)
-
-
+        if r.get("keyword_research"):
+            st.markdown("**AI Keyword Research + Volumes (UK)**")
+            st.dataframe(r["keyword_research"], use_container_width=True)
 
 
 
