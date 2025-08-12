@@ -1201,8 +1201,8 @@ if run_btn and default_domain:
                 st.write("No critical issues detected. Nice!")
 
     if r.get("semrush"):
-    st.markdown("**Semrush Insights**")
-    sm = r["semrush"]
+        st.markdown("**Semrush Insights**")
+        sm = r["semrush"]
 
     colA, colB = st.columns(2)
     with colA:
