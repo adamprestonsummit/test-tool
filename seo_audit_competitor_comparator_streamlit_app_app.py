@@ -999,8 +999,8 @@ if run_btn and default_domain:
         status.write(f"Fetching: {t}")
         res = analyze_page(t, use_ai=use_ai, topic_hint=topic_hint)
         if use_semrush:
-    domain = res.get("_domain")
-    final_url = res.get("_final_url") or res.get("_url")
+            domain = res.get("_domain")
+            final_url = res.get("_final_url") or res.get("_url")
 
     # Backlinks
     bl_dom = semrush_backlinks_overview(domain, "root_domain") or {}
