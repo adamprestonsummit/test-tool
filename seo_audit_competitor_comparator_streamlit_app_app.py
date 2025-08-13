@@ -1314,7 +1314,7 @@ if run_btn and default_domain:
                 if res.get("ai_scores"):
                      _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
                                         for k, v in res.items() if k.startswith("score_ai_")])
-                   ai_f = res.get("ai_findings") or {}
+                ai_f = res.get("ai_findings") or {}
                 if ai_f:
                   c1, c2, c3 = st.columns(3)
                 with c1:
