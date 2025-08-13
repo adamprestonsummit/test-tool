@@ -159,7 +159,17 @@ def has_sitemap(domain_url: str, hinted_sitemaps: List[str]) -> bool:
     return False
 
 # ----------------------------- OpenAI helper (optional) -----------------------------
-def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, timeout: int = 30, debug: bool = False) -> Optional[Dict[str, Any]]:
+def ai_analyze_with_openai(
+    page_text: str,
+    topic_hint: Optional[str] = None,
+    extra_context: Optional[Dict[str, Any]] = None,
+    timeout: int = 30,
+    debug: bool = False
+) -> Optional[Dict[str, Any]]:
+    """
+    Uses the ChatGPT API (OpenAI) to score content AND propose themes, FAQs, and internal link suggestions.
+    Returns a dict with 'ai_scores' and 'ai_findings'.
+    """
     api_key = _get_openai_key()
     if not api_key:
         if debug: st.write("DEBUG: No OPENAI_API_KEY found")
@@ -169,36 +179,46 @@ def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, tim
     if len(text) > 20000:
         text = text[:20000]
 
+    # We ask for structured JSON with explicit fields we’ll render in the UI.
     schema_hint = {
         "ai_scores": {
             "intent_match": 0, "topical_coverage": 0, "eeat": 0, "helpfulness": 0,
             "originality_judgement": 0, "tone_fit": 0, "conversion_copy": 0, "internal_link_opps": 0
         },
         "ai_findings": {
-            "missing_subtopics": [], "weak_sections": [], "entities_detected": [],
-            "schema_recommendations": [], "faq_suggestions": [],
-            "internal_link_suggestions": [], "copy_suggestions": []
+            "missing_subtopics": [],         # content themes to add (strings)
+            "weak_sections": [],
+            "entities_detected": [],
+            "schema_recommendations": [],
+            "faq_suggestions": [],           # list[str]
+            "internal_link_suggestions": [], # list[{"anchor": str, "target": str}]
+            "copy_suggestions": []
         }
     }
 
     system_text = "You are an SEO content analyst. Return ONLY valid JSON matching the provided schema."
+
+    ctx = json.dumps(extra_context or {}, ensure_ascii=False)
     user_prompt = (
-        "Return ONLY compact JSON (no prose) exactly matching this schema:\n"
+        "Return ONLY compact JSON exactly matching this schema:\n"
         f"{json.dumps(schema_hint)}\n\n"
         f"Business/topic hint: {topic_hint or '(none)'}\n"
-        "Text to analyze:\n<<<\n" + text + "\n>>>\n\n"
-        "Score intent_match, topical_coverage, eeat, helpfulness, originality_judgement, "
-        "tone_fit, conversion_copy, internal_link_opps (0–100 each). Return JSON only."
+        f"Extra context (URL, headings, sample internal anchors): {ctx}\n\n"
+        "Populate:\n"
+        "- 'missing_subtopics': 5–10 concise content themes the page should add (strings).\n"
+        "- 'faq_suggestions': 5–10 concise user-intent questions (strings).\n"
+        "- 'internal_link_suggestions': 5–10 objects with keys 'anchor' and 'target' "
+        "(target is a probable internal path or slug like '/pricing' or '/guides/x').\n"
+        "Score fields (0–100) in 'ai_scores'.\n\n"
+        "Text to analyze:\n<<<\n" + text + "\n>>>\n"
     )
 
     endpoint = "https://api.openai.com/v1/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     body = {
         "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "system", "content": system_text},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": [{"role": "system", "content": system_text},
+                     {"role": "user", "content": user_prompt}],
         "temperature": 0.2,
     }
 
@@ -211,15 +231,13 @@ def ai_analyze_with_openai(page_text: str, topic_hint: Optional[str] = None, tim
         data = resp.json()
         out_text = (data.get("choices", [{}])[0].get("message", {}) or {}).get("content", "") or ""
         out_text = out_text.strip()
-
-        # Strip fenced code blocks if present
         if out_text.startswith("```"):
             out_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", out_text, flags=re.MULTILINE).strip()
-
         return json.loads(out_text)
     except Exception as e:
         if debug: st.write("DEBUG exception:", repr(e))
         return None
+
 
 # ----------------------------- Semrush helpers -----------------------------
 SEMRUSH_BASE = "https://api.semrush.com/"
@@ -740,6 +758,27 @@ def analyze_page(
     anchor_q = internal_anchor_quality(soup, base_domain)
     js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
 
+
+    # Light context to help AI suggest themes/FAQs/internal links
+    headings_texts = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])][:30]
+    anchor_texts = []
+    seen = set()
+    for a in a_tags:
+        href = a.get("href") or ""
+        txt = (a.get_text(" ", strip=True) or "").strip()
+    if is_internal(href, base_domain) and len(txt) >= 4:
+        t = txt.lower()
+        if t not in {"click here","read more","learn more","more","here"} and t not in seen:
+            seen.add(t); anchor_texts.append(txt)
+    if len(anchor_texts) >= 40:
+        break
+    extra_ctx = {
+        "final_url": result.get("_final_url") or url,
+        "domain": base_domain,
+        "headings": headings_texts,
+        "sample_internal_anchor_texts": anchor_texts[:40],
+    }
+
     # Links
     a_tags = soup.find_all("a")
     internal = 0
@@ -829,15 +868,16 @@ def analyze_page(
         "js_reliance": js_meta,
     })
 
-    # AI analysis (optional)
+     # AI analysis (optional, ChatGPT API)
     ai = None
     if use_ai:
-        ai = ai_analyze_with_openai(visible_text, topic_hint, debug=show_ai_debug)
+        ai = ai_analyze_with_openai(visible_text, topic_hint, extra_context=extra_ctx, debug=show_ai_debug)
     if ai:
         result["ai_scores"] = ai.get("ai_scores")
         result["ai_findings"] = ai.get("ai_findings")
     elif use_ai:
         result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
+
 
     # Compute sub-scores & overall
     result.update(compute_scores(result))
@@ -937,6 +977,7 @@ with st.sidebar:
     provider = st.selectbox("AI provider", ["OpenAI", "Off"], index=0, key="ai_provider")
     use_ai = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
+
 
     st.subheader("Semrush (optional)")
     use_semrush = st.checkbox("Fetch Semrush insights", value=False, key="semrush_toggle")
@@ -1146,6 +1187,18 @@ if run_btn and default_domain:
                 _score_chips(res)
                 st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
+    def _bullets(items):
+        items = items or []
+    for it in items[:10]:
+        if isinstance(it, dict):
+            anchor = it.get("anchor") or it.get("text") or ""
+            target = it.get("target") or it.get("slug") or it.get("url") or ""
+            if anchor or target:
+                st.markdown(f"- **{anchor}** → `{target}`")
+        else:
+            st.markdown(f"- {it}")
+
+
             # 2-column layout of cards
             col1, col2 = st.columns(2)
 
@@ -1242,14 +1295,28 @@ if run_btn and default_domain:
                             ])
 
             # AI (optional)
-            if res.get("ai_scores") or res.get("_ai_error"):
-                with st.container(border=True):
-                    st.markdown("<div class='section-title'>AI Analysis</div>", unsafe_allow_html=True)
-                    if res.get("ai_scores"):
-                        _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
-                                                    for k, v in res.items() if k.startswith("score_ai_")])
-                    if res.get("_ai_error"):
-                        _chip(res["_ai_error"], "warn")
+    if res.get("ai_scores") or res.get("_ai_error"):
+        with st.container(border=True):
+            st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
+        if res.get("ai_scores"):
+            _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
+                                        for k, v in res.items() if k.startswith("score_ai_")])
+        ai_f = res.get("ai_findings") or {}
+        if ai_f:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown("**Content themes to add**")
+                _bullets(ai_f.get("missing_subtopics"))
+            with c2:
+                st.markdown("**FAQ suggestions**")
+                _bullets(ai_f.get("faq_suggestions"))
+            with c3:
+                st.markdown("**Internal link suggestions**")
+                # Works with either list[str] or list[{anchor,target}]
+                _bullets(ai_f.get("internal_link_suggestions"))
+        if res.get("_ai_error"):
+            _chip(res["_ai_error"], "warn")
+
 
             # Recommendations (always last)
             with st.container(border=True):
