@@ -1000,14 +1000,6 @@ with st.sidebar:
     use_ai = provider != "Off"
     topic_hint = st.text_input("Topic/intent hint (optional)", "", key="ai_topic_hint")
 
-
-    st.subheader("Semrush (optional)")
-    use_semrush = st.checkbox("Fetch Semrush insights", value=False, key="semrush_toggle")
-    if use_semrush and not _get_semrush_key():
-        st.warning("No SEMRUSH_API_KEY found in Secrets or env.")
-
-    run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
-
     st.divider()
     st.subheader("Google PSI (PageSpeed)")
 
@@ -1019,6 +1011,15 @@ with st.sidebar:
 
     psi_strategy = st.selectbox("Strategy", ["mobile", "desktop"], index=0, key="psi_strategy")
     show_psi_debug = st.checkbox("Show PSI debug", value=False, key="psi_debug")
+
+    st.subheader("Semrush (optional)")
+    use_semrush = st.checkbox("Fetch Semrush insights", value=False, key="semrush_toggle")
+    if use_semrush and not _get_semrush_key():
+        st.warning("No SEMRUSH_API_KEY found in Secrets or env.")
+
+    run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
+
+    
 
 # --- Main ---
 if run_btn and default_domain:
