@@ -712,14 +712,19 @@ def analyze_page(
     show_ai_debug: bool = False,
 ) -> Dict[str, Any]:
     html, fetch_meta = get_home_html(url)
-    result: Dict[str, Any] = {"_url": url, "_final_url": fetch_meta.get("final_url"), "_domain": extract_domain(url)}
+    result: Dict[str, Any] = {
+        "_url": url,
+        "_final_url": fetch_meta.get("final_url"),
+        "_domain": extract_domain(url),
+    }
     result.update(fetch_meta)
 
+    # If fetch failed, return minimal structure with computed scores/recs
     if fetch_meta.get("error") or not html:
-        # Compute minimal scores even if failed fetch
         result.update(compute_scores(result))
-        result["_recommendations"] = generate_recommendations(result)
-        result["_issue_count"] = len(result["_recommendations"])
+        recs = generate_recommendations(result)
+        result["_recommendations"] = recs
+        result["_issue_count"] = len(recs)
         return result
 
     soup = parse_html(html)
@@ -744,59 +749,27 @@ def analyze_page(
 
     # Social & schema
     og_title = find_meta_tag(soup, prop="og:title")
-    og_desc = find_meta_tag(soup, prop="og:description")
+    og_desc  = find_meta_tag(soup, prop="og:description")
     tw_title = find_meta_tag(soup, name="twitter:title")
-    tw_desc = find_meta_tag(soup, name="twitter:description")
+    tw_desc  = find_meta_tag(soup, name="twitter:description")
     schema_jsonld = has_json_ld(soup)
 
     # Content quality & structure
     visible_text = visible_text_from_soup(soup)
-    fre = flesch_reading_ease(visible_text)
+    fre  = flesch_reading_ease(visible_text)
     orig = originality_heuristic(visible_text)
     tone = tone_heuristic(visible_text)
     headings_meta = heading_audit(soup)
+    # Links (collect a_tags once, used below too)
+    a_tags = soup.find_all("a")
+    internal = external = 0
+    for a in a_tags:
+        href = a.get("href") or ""
+        if is_internal(href, base_domain):
+            internal += 1
+        elif href.startswith(("http://", "https://")):
+            external += 1
     anchor_q = internal_anchor_quality(soup, base_domain)
-    js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
-
-
-    # Light context to help AI suggest themes/FAQs/internal links
-headings_texts = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])][:30]
-
-anchor_texts: list[str] = []
-seen: set[str] = set()
-
-for a in a_tags:
-    href = a.get("href") or ""
-    txt = (a.get_text(" ", strip=True) or "").strip()
-    if is_internal(href, base_domain) and len(txt) >= 4:
-        t = txt.lower()
-        if t not in {"click here", "read more", "learn more", "more", "here"} and t not in seen:
-            seen.add(t)
-            anchor_texts.append(txt)
-            if len(anchor_texts) >= 40:
-                break  # <-- must be inside the for loop
-
-# safety cap (just in case)
-anchor_texts = anchor_texts[:40]
-
-extra_ctx = {
-    "final_url": result.get("_final_url") or url,
-    "domain": base_domain,
-    "headings": headings_texts,
-    "sample_internal_anchor_texts": anchor_texts,
-}
-
-
-    # Links
-a_tags = soup.find_all("a")
-internal = 0
-external = 0
-for a in a_tags:
-    href = a.get("href") or ""
-    if is_internal(href, base_domain):
-        internal += 1
-    elif href.startswith(("http://", "https://")):
-        external += 1
 
     # Images
     imgs = soup.find_all("img")
@@ -804,14 +777,39 @@ for a in a_tags:
     img_alt_with = sum(1 for im in imgs if (im.get("alt") or "").strip())
     img_alt_ratio = (img_alt_with / img_count) if img_count else 1.0
 
+    # JS reliance
+    js_meta = js_reliance_metrics(soup, fetch_meta.get("page_bytes"))
+
     # Robots & Sitemap
     robots = get_robots_txt(url)
     sitemap_present = has_sitemap(url, robots.get("sitemaps", []))
 
-    # Mobile meta viewport & robots meta
-    viewport = soup.find("meta", attrs={"name": "viewport"}) is not None
+    # Mobile viewport & robots meta
+    viewport   = soup.find("meta", attrs={"name": "viewport"}) is not None
     robots_meta = find_meta_tag(soup, name="robots") or ""
-    is_noindex = "noindex" in robots_meta.lower()
+    is_noindex  = "noindex" in robots_meta.lower()
+
+    # --------- Build extra context for AI (themes/FAQs/internal links)
+    headings_texts = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])][:30]
+    anchor_texts: List[str] = []
+    seen: set[str] = set()
+    for a in a_tags:
+        href = a.get("href") or ""
+        txt  = (a.get_text(" ", strip=True) or "").strip()
+        if is_internal(href, base_domain) and len(txt) >= 4:
+            t = txt.lower()
+            if t not in {"click here", "read more", "learn more", "more", "here"} and t not in seen:
+                seen.add(t)
+                anchor_texts.append(txt)
+                if len(anchor_texts) >= 40:
+                    break
+    anchor_texts = anchor_texts[:40]
+    extra_ctx = {
+        "final_url": result.get("_final_url") or url,
+        "domain": base_domain,
+        "headings": headings_texts,
+        "sample_internal_anchor_texts": anchor_texts,
+    }
 
     # PSI (optional)
     cwv: Dict[str, Any] = {}
@@ -849,6 +847,7 @@ for a in a_tags:
     except Exception:
         pass
 
+    # Collate page metrics
     result.update({
         "title": title,
         "title_len": title_len,
@@ -876,25 +875,29 @@ for a in a_tags:
         "js_reliance": js_meta,
     })
 
-     # AI analysis (optional, ChatGPT API)
+    # AI analysis (OpenAI/ChatGPT only)
     ai = None
     if use_ai:
-        ai = ai_analyze_with_openai(visible_text, topic_hint, extra_context=extra_ctx, debug=show_ai_debug)
+        ai = ai_analyze_with_openai(
+            visible_text,
+            topic_hint,
+            extra_context=extra_ctx,
+            debug=show_ai_debug
+        )
     if ai:
         result["ai_scores"] = ai.get("ai_scores")
         result["ai_findings"] = ai.get("ai_findings")
     elif use_ai:
         result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
 
-
-    # Compute sub-scores & overall
+    # Scores & recommendations
     result.update(compute_scores(result))
-
-    # Recommendations
     recs = generate_recommendations(result)
     result["_recommendations"] = recs
     result["_issue_count"] = len(recs)
+
     return result
+
 # === app.py (Chunk 3/3) ===============================================
 
 st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide")
