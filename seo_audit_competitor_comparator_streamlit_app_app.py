@@ -968,6 +968,17 @@ def _score_chips(res: dict):
             st.markdown(f"<div class='subtle'>{lbl}</div>", unsafe_allow_html=True)
             st.markdown(f"<span class='score-pill'>{int(val or 0)}</span>", unsafe_allow_html=True)
 
+def _bullets(items: list | None):
+    items = items or []
+    for it in items[:10]:
+        if isinstance(it, dict):
+            anchor = (it.get("anchor") or it.get("text") or "").strip()
+            target = (it.get("target") or it.get("slug") or it.get("url") or "").strip()
+            if anchor or target:
+                st.markdown(f"- **{anchor}** → `{target}`")
+        else:
+            st.markdown(f"- {it}")
+
 
 # --- Sidebar ---
 with st.sidebar:
@@ -1198,16 +1209,7 @@ if run_btn and default_domain:
                 _score_chips(res)
                 st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
-    def _bullets(items):
-        items = items or []
-    for it in items[:10]:
-        if isinstance(it, dict):
-            anchor = it.get("anchor") or it.get("text") or ""
-            target = it.get("target") or it.get("slug") or it.get("url") or ""
-            if anchor or target:
-                st.markdown(f"- **{anchor}** → `{target}`")
-        else:
-            st.markdown(f"- {it}")
+
 
 
             # 2-column layout of cards
