@@ -238,6 +238,35 @@ def ai_analyze_with_openai(
         if debug: st.write("DEBUG exception:", repr(e))
         return None
 
+# ---- CWV + AI grading helpers ----
+def _fmt3(x):
+    try:
+        return f"{float(x):.3f}"
+    except Exception:
+        return "—"
+
+def _cwv_grade(metric: str, val) -> str:
+    """Return 'good' | 'warn' | 'bad' using Google CWV thresholds."""
+    try:
+        v = float(val)
+    except Exception:
+        return "warn"
+    if metric == "CLS":                          # unitless
+        return "good" if v <= 0.10 else ("warn" if v <= 0.25 else "bad")
+    if metric == "LCP_ms":                       # ms
+        return "good" if v <= 2500 else ("warn" if v <= 4000 else "bad")
+    if metric == "INP_ms":                       # ms (2024 thresholds)
+        return "good" if v <= 200 else ("warn" if v <= 500 else "bad")
+    return "warn"
+
+def _ai_grade(score) -> str:
+    """Colour bands for 0–100 style scores."""
+    try:
+        s = int(score)
+    except Exception:
+        return "warn"
+    return "good" if s >= 80 else ("warn" if s >= 60 else "bad")
+
 
 # ----------------------------- Semrush helpers -----------------------------
 SEMRUSH_BASE = "https://api.semrush.com/"
@@ -1346,38 +1375,39 @@ if run_btn and default_domain:
                             "Lighthouse categories",
                             [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()]
                         )
-                    if res.get("cwv"):
-                        _kv_section("CWV", [
-                            ("LCP (ms)", (res.get("cwv") or {}).get("LCP_ms")),
-                            ("CLS", (res.get("cwv") or {}).get("CLS")),
-                            ("INP (ms)", (res.get("cwv") or {}).get("INP_ms")),
-                            ("Good LCP %", (res.get("cwv") or {}).get("GOOD_LCP_%")),
-                            ("Good CLS %", (res.get("cwv") or {}).get("GOOD_CLS_%")),
-                            ("Good INP %", (res.get("cwv") or {}).get("GOOD_INP_%")),
-                        ])
+                     if res.get("cwv"):
+            cwv = res.get("cwv") or {}
+
+            # Vital chips (3 dp + graded)
+            st.markdown("**Core Web Vitals**")
+            for label, key in [("LCP (ms)", "LCP_ms"), ("CLS", "CLS"), ("INP (ms)", "INP_ms")]:
+                v = cwv.get(key)
+                _chip(f"{label}: {_fmt3(v)}", _cwv_grade(key, v))
+
+            # Keep the Page Experience “% good” breakdown
+            _kv_section("CWV distribution (Page Experience % good)", [
+                ("Good LCP %", cwv.get("GOOD_LCP_%")),
+                ("Good CLS %", cwv.get("GOOD_CLS_%")),
+                ("Good INP %", cwv.get("GOOD_INP_%")),
+            ])
 
             # AI (optional)
-            if res.get("ai_scores") or res.get("ai_findings") or res.get("_ai_error"):
-                with st.container(border=True):
-                    st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
-                    if res.get("ai_scores"):
-                        _kv_section("Scores (AI)", [
-                            ("INTENT",        res.get("score_ai_intent")),
-                            ("COVERAGE",      res.get("score_ai_coverage")),
-                            ("EEAT",          res.get("score_ai_eeat")),
-                            ("HELPFULNESS",   res.get("score_ai_helpfulness")),
-                            ("ORIGINALITY",   res.get("score_ai_originality")),
-                            ("TONE",          res.get("score_ai_tone")),
-                            ("CONVERSION",    res.get("score_ai_conversion")),
-                            ("INTERNAL_LINKS",res.get("score_ai_internal_links")),
-                        ])
-                    ai_f = res.get("ai_findings") or {}
-                    if ai_f:
-                        st.markdown("**Content themes to add**"); _bullets(ai_f.get("missing_subtopics"))
-                        st.markdown("**FAQ suggestions**"); _bullets(ai_f.get("faq_suggestions"))
-                        st.markdown("**Internal link suggestions**"); _bullets(ai_f.get("internal_link_suggestions"))
-                    if res.get("_ai_error"):
-                        _chip(res["_ai_error"], "warn")
+            if res.get("ai_scores"):
+                st.markdown("<div class='section-title'>Scores (AI)</div>", unsafe_allow_html=True)
+                for label, key in [
+                    ("INTENT", "score_ai_intent"),
+                    ("COVERAGE", "score_ai_coverage"),
+                    ("EEAT", "score_ai_eeat"),
+                    ("HELPFULNESS", "score_ai_helpfulness"),
+                    ("ORIGINALITY", "score_ai_originality"),
+                    ("TONE", "score_ai_tone"),
+                    ("CONVERSION", "score_ai_conversion"),
+                    ("INTERNAL_LINKS", "score_ai_internal_links"),
+                ]:
+                    val = res.get(key)
+                    if val is not None:
+                        _chip(f"{label}: {int(val)}", _ai_grade(val))
+
 
             # RECOMMENDATIONS
             with st.container(border=True):
