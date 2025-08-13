@@ -1246,7 +1246,7 @@ if run_btn and default_domain:
     st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------------ Details (one-column accordion) ------------------------
-if results:
+ if results:
     st.subheader("Details by Site")
     for i, res in enumerate(results, start=1):
         header = f"{res.get('_domain')}  |  Overall: {int(res.get('overall_score') or 0)}"
