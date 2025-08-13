@@ -882,8 +882,7 @@ def analyze_page(
 
     result.update({"psi_scores": psi_scores, "cwv": cwv, "psi_status": psi_status})
 
-    except Exception:
-        pass
+    
 
     # Collate page metrics
     result.update({
