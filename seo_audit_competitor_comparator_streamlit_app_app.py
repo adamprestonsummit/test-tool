@@ -853,6 +853,71 @@ st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide"
 st.title("🔎 SEO Audit & Competitor Comparator")
 st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, competitor comparison, and optional OpenAI for semantic checks.")
 
+# --- Polished detail view styles ---
+st.markdown("""
+<style>
+.badge{display:inline-block;padding:.25rem .55rem;border-radius:999px;font-weight:600;
+       border:1px solid rgba(0,0,0,.06);font-size:0.85rem;margin-right:.35rem;margin-bottom:.35rem}
+.badge.good{background:#E6F4EA;color:#137333;border-color:#D7EBD8}
+.badge.warn{background:#FEF7E0;color:#8F4E00;border-color:#F3E6B1}
+.badge.bad{background:#FCE8E6;color:#A50E0E;border-color:#F7C5C0}
+.badge.info{background:#EEF2FF;color:#3730A3;border-color:#E0E7FF}
+
+.kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem 1rem}
+.kv-grid .k{opacity:.75}
+.kv-grid .v{font-weight:600}
+
+.section-title{font-weight:700;margin:.2rem 0 .5rem 0}
+.subtle{opacity:.8}
+
+.score-pill{display:inline-block;padding:.25rem .6rem;border-radius:999px;background:#EEF2FF;
+            color:#4338CA;font-weight:700}
+.hr{border-top:1px solid rgba(0,0,0,.08);margin:.75rem 0}
+.title-small{font-weight:600;opacity:.9}
+.code-wrap{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace, SFMono-Regular, Menlo, monospace;
+           background:#f7f7f9;border:1px solid #eee;border-radius:8px;padding:.5rem}
+</style>
+""", unsafe_allow_html=True)
+
+def _chip(text: str, kind: str = "info"):
+    st.markdown(f"<span class='badge {kind}'>{text}</span>", unsafe_allow_html=True)
+
+def _kv_section(title: str, pairs: list[tuple[str, str | int | float | None]]):
+    with st.container(border=True):
+        st.markdown(f"<div class='section-title'>{title}</div>", unsafe_allow_html=True)
+        rows = []
+        for k, v in pairs:
+            vv = "—" if v is None or v == "" else v
+            rows.append(f"<div class='k'>{k}</div><div class='v'>{vv}</div>")
+        st.markdown(f"<div class='kv-grid'>{''.join(rows)}</div>", unsafe_allow_html=True)
+
+def _progress_row(label: str, value_0_to_1: float | None):
+    col1, col2 = st.columns([1,3])
+    with col1:
+        st.markdown(f"<div class='title-small'>{label}</div>", unsafe_allow_html=True)
+    with col2:
+        pct = 0 if value_0_to_1 is None else max(0, min(1, float(value_0_to_1)))
+        st.progress(int(pct * 100))
+
+def _good_bad_chip(ok: bool, label_true="Yes", label_false="No"):
+    _chip(label_true if ok else label_false, "good" if ok else "bad")
+
+def _score_chips(res: dict):
+    cols = st.columns(6)
+    items = [
+        ("Overall", res.get("overall_score")),
+        ("Tech", res.get("score_tech")),
+        ("Perf", res.get("score_performance")),
+        ("Readability", res.get("score_readability")),
+        ("Headings", res.get("score_heading_structure")),
+        ("Anchors", res.get("score_anchor_quality")),
+    ]
+    for c, (lbl, val) in zip(cols, items):
+        with c:
+            st.markdown(f"<div class='subtle'>{lbl}</div>", unsafe_allow_html=True)
+            st.markdown(f"<span class='score-pill'>{int(val or 0)}</span>", unsafe_allow_html=True)
+
+
 # --- Sidebar ---
 with st.sidebar:
     st.header("Settings")
@@ -1069,99 +1134,133 @@ if run_btn and default_domain:
     fig2.update_yaxes(range=[0, 100])
     st.plotly_chart(fig2, use_container_width=True)
 
-    # ------------------------ Details ------------------------
-    if results:
-        st.subheader("Details by Site")
-        for res in results:
-            with st.expander(f"{res.get('_domain')} — details"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown("**Basics**")
-                    st.write({
-                        "Final URL": res.get("_final_url"),
-                        "Status": res.get("status_code"),
-                        "HTTPS": res.get("https"),
-                        "Redirects": res.get("redirects"),
-                        "Load (ms)": res.get("elapsed_ms"),
-                        "HTML bytes": res.get("page_bytes"),
-                        "Noindex": res.get("noindex"),
-                    })
-                    st.markdown("**On-page**")
-                    st.write({
-                        "Title": res.get("title"),
-                        "Title length": res.get("title_len"),
-                        "Meta desc length": res.get("meta_desc_len"),
-                        "H1 count": res.get("h1_count"),
-                        "Canonical": res.get("canonical"),
-                    })
-                    st.markdown("**Content Quality**")
-                    st.write({
-                        "Flesch Reading Ease": res.get("readability_fre"),
-                        "Originality (TTR)": res.get("originality", {}).get("ttr"),
-                        "Repeated 3-grams": res.get("originality", {}).get("repeated_trigram_ratio"),
-                        "Tone (exclam/100sents)": res.get("tone", {}).get("exclamation_density"),
-                        "Tone (buzz rate)": res.get("tone", {}).get("buzz_rate"),
-                    })
-                    st.markdown("**Content Stats**")
-                    st.write({
-                        "Links (internal/external)": f"{res.get('internal_links')}/{res.get('external_links')}",
-                        "Images": res.get("images"),
-                        "Alt ratio": res.get("img_alt_ratio"),
-                    })
-                with col2:
-                    st.markdown("**Headings**")
-                    st.write(res.get("headings"))
-                    st.markdown("**Internal Link Anchors**")
-                    st.write(res.get("anchor_quality"))
-                    st.markdown("**JS Reliance**")
-                    st.write(res.get("js_reliance"))
-                    st.markdown("**Robots/Sitemap**")
-                    st.write({
-                        "robots.txt": res.get("robots_exists"),
-                        "sitemap": res.get("sitemap_exists"),
-                    })
-                    st.markdown("**Social/Schema**")
-                    st.write({
-                        "Open Graph": res.get("og_present"),
-                        "Twitter Cards": res.get("twitter_present"),
-                        "JSON-LD schema": res.get("schema_jsonld"),
-                    })
-                    if res.get("psi_scores"):
-                        st.markdown("**Lighthouse Categories (mobile)**")
-                        st.write(res.get("psi_scores"))
-                    if res.get("cwv"):
-                        st.markdown("**Core Web Vitals (mobile)**")
-                        st.write(res.get("cwv"))
+ # ------------------------ Details (polished) ------------------------
+if results:
+    st.subheader("Details by Site")
+    for res in results:
+        header_left = f"{res.get('_domain')} — details"
+        header_right = f"Overall: {int(res.get('overall_score') or 0)}"
+        with st.expander(f"{header_left}   |   {header_right}"):
+            # Top row: chips
+            st.markdown("##### Key Scores")
+            _score_chips(res)
+            st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
-            if res.get("ai_scores"):
-                st.markdown("**AI Analysis**")
-                st.write(res.get("ai_scores"))
-                ai_f = res.get("ai_findings") or {}
-                if ai_f:
-                    if ai_f.get("missing_subtopics"):
-                        st.write({"Missing subtopics": ai_f.get("missing_subtopics")})
-                    if ai_f.get("copy_suggestions"):
-                        st.write({"Copy suggestions": ai_f.get("copy_suggestions")[:8]})
-                    if ai_f.get("schema_recommendations"):
-                        st.write({"Schema recommendations": ai_f.get("schema_recommendations")})
-                    if ai_f.get("faq_suggestions"):
-                        st.write({"FAQ suggestions": ai_f.get("faq_suggestions")[:5]})
-                    if ai_f.get("internal_link_suggestions"):
-                        st.write({"Internal link suggestions": ai_f.get("internal_link_suggestions")[:8]})
-            elif res.get("_ai_error"):
-                st.info(f"AI note: {res['_ai_error']}")
+            # 2-column layout of cards
+            col1, col2 = st.columns(2)
 
-            st.markdown("**Recommendations**")
-            recs = res.get("_recommendations", [])
-            if recs:
-                for m in recs:
-                    st.write("• ", m)
-            else:
-                st.write("No critical issues detected. Nice!")
+            with col1:
+                # BASICS
+                _kv_section("Basics", [
+                    ("Final URL", res.get("_final_url")),
+                    ("Status", res.get("status_code")),
+                    ("HTTPS", "Yes" if res.get("https") else "No"),
+                    ("Redirects", res.get("redirects")),
+                    ("Load (ms)", res.get("elapsed_ms")),
+                    ("HTML bytes", res.get("page_bytes")),
+                    ("Noindex", "Yes" if res.get("noindex") else "No"),
+                ])
 
-            if res.get("keyword_research"):
-                st.markdown("**AI Keyword Research + Volumes (UK)**")
-                st.dataframe(res["keyword_research"], use_container_width=True)
+                # ON-PAGE
+                with st.container(border=True):
+                    st.markdown("<div class='section-title'>On-page</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='title-small'>Title</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='code-wrap'>{(res.get('title') or '')}</div>", unsafe_allow_html=True)
+                    _kv_section("On-page — stats", [
+                        ("Title length", res.get("title_len")),
+                        ("Meta desc length", res.get("meta_desc_len")),
+                        ("H1 count", res.get("h1_count")),
+                        ("Canonical", res.get("canonical")),
+                    ])
+
+                # CONTENT QUALITY
+                with st.container(border=True):
+                    st.markdown("<div class='section-title'>Content Quality</div>", unsafe_allow_html=True)
+                    _kv_section("Readability & Tone", [
+                        ("Flesch Reading Ease", res.get("readability_fre")),
+                        ("Originality (TTR)", (res.get("originality") or {}).get("ttr")),
+                        ("Repeated 3-grams", (res.get("originality") or {}).get("repeated_trigram_ratio")),
+                        ("Exclam/100 sents", (res.get("tone") or {}).get("exclamation_density")),
+                        ("Buzz rate", (res.get("tone") or {}).get("buzz_rate")),
+                    ])
+
+            with col2:
+                # HEADING STRUCTURE
+                _kv_section("Heading Structure", [
+                    ("Total headings", (res.get("headings") or {}).get("h_total")),
+                    ("H1 count", (res.get("headings") or {}).get("h1_count")),
+                    ("H2 count", (res.get("headings") or {}).get("h2_count")),
+                    ("Empty headings", (res.get("headings") or {}).get("empty_headings")),
+                    ("Level skips", (res.get("headings") or {}).get("level_skips")),
+                ])
+
+                # LINKS & ANCHORS
+                with st.container(border=True):
+                    st.markdown("<div class='section-title'>Links & Anchors</div>", unsafe_allow_html=True)
+                    _kv_section("Link counts", [
+                        ("Internal links", res.get("internal_links")),
+                        ("External links", res.get("external_links")),
+                        ("Images", res.get("images")),
+                    ])
+                    _progress_row("Alt text ratio", res.get("img_alt_ratio"))
+                    _progress_row("Descriptive anchor ratio", (res.get("anchor_quality") or {}).get("descriptive_ratio"))
+
+                # JS RELIANCE
+                _kv_section("JS Reliance", [
+                    ("Script count", (res.get("js_reliance") or {}).get("script_count")),
+                    ("External scripts", (res.get("js_reliance") or {}).get("external_script_count")),
+                    ("Inline script chars", (res.get("js_reliance") or {}).get("inline_script_chars")),
+                    ("Text / HTML ratio", (res.get("js_reliance") or {}).get("text_to_html_ratio")),
+                ])
+
+                # ROBOTS / SITEMAP / SOCIAL
+                with st.container(border=True):
+                    st.markdown("<div class='section-title'>Robots, Sitemap & Social</div>", unsafe_allow_html=True)
+                    st.markdown("**robots.txt** ", unsafe_allow_html=True)
+                    _good_bad_chip(bool(res.get("robots_exists")), "Present", "Missing")
+                    st.markdown("**sitemap** ", unsafe_allow_html=True)
+                    _good_bad_chip(bool(res.get("sitemap_exists")), "Present", "Missing")
+                    st.markdown("**Open Graph / Twitter / JSON-LD**", unsafe_allow_html=True)
+                    _chip("OG", "good" if res.get("og_present") else "bad")
+                    _chip("Twitter", "good" if res.get("twitter_present") else "bad")
+                    _chip("JSON-LD", "good" if res.get("schema_jsonld") else "bad")
+
+                # PSI / CWV
+                if res.get("psi_scores") or res.get("cwv"):
+                    with st.container(border=True):
+                        st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals (mobile)</div>", unsafe_allow_html=True)
+                        if res.get("psi_scores"):
+                            _kv_section("Lighthouse categories", [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()])
+                        if res.get("cwv"):
+                            _kv_section("CWV", [
+                                ("LCP (ms)", (res.get("cwv") or {}).get("LCP_ms")),
+                                ("CLS", (res.get("cwv") or {}).get("CLS")),
+                                ("INP (ms)", (res.get("cwv") or {}).get("INP_ms")),
+                                ("Good LCP %", (res.get("cwv") or {}).get("GOOD_LCP_%")),
+                                ("Good CLS %", (res.get("cwv") or {}).get("GOOD_CLS_%")),
+                                ("Good INP %", (res.get("cwv") or {}).get("GOOD_INP_%")),
+                            ])
+
+            # AI (optional)
+            if res.get("ai_scores") or res.get("_ai_error"):
+                with st.container(border=True):
+                    st.markdown("<div class='section-title'>AI Analysis</div>", unsafe_allow_html=True)
+                    if res.get("ai_scores"):
+                        _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
+                                                    for k, v in res.items() if k.startswith("score_ai_")])
+                    if res.get("_ai_error"):
+                        _chip(res["_ai_error"], "warn")
+
+            # Recommendations (always last)
+            with st.container(border=True):
+                st.markdown("<div class='section-title'>Recommendations</div>", unsafe_allow_html=True)
+                recs = res.get("_recommendations", []) or []
+                if recs:
+                    for m in recs:
+                        st.write("•", m)
+                else:
+                    _chip("No critical issues detected", "good")
+
 
     # ------------------------ Downloads ------------------------
     st.subheader("Export")
