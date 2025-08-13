@@ -831,7 +831,7 @@ def analyze_page(
                     f"?url={requests.utils.quote(result.get('_final_url') or url, safe='')}"
                     f"&key={psi_key}&category=performance&category=seo&category=accessibility&category=pwa&strategy={strat}"
                 )
-                r = requests.get(psi_url, timeout=30)
+                r = requests.get(psi_url, timeout=60)
                 psi_status.update({"http_status": getattr(r, "status_code", None), "strategy": strat})
 
                 if not r or r.status_code != 200:
