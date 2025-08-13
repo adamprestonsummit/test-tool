@@ -788,7 +788,7 @@ extra_ctx = {
 
 
     # Links
-    a_tags = soup.find_all("a")
+a_tags = soup.find_all("a")
     internal = 0
     external = 0
     for a in a_tags:
