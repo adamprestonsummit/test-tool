@@ -1438,7 +1438,7 @@ if run_btn and default_domain:
             # RECOMMENDATIONS
             with st.container(border=True):
                 st.markdown("<div class='section-title'>Recommendations</div>", unsafe_allow_html=True)
-                recs = res.get("_recommendations", []) or []
+                    recs = res.get("_recommendations", []) or []
                 if recs:
                     for m in recs:
                         st.write("•", m)
