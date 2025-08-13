@@ -1444,9 +1444,9 @@ if has_ai_scores or has_ai_findings or res.get("_ai_error"):
         with st.container(border=True):
             st.markdown("<div class='section-title'>Recommendations</div>", unsafe_allow_html=True)
             recs = res.get("_recommendations", []) or []
-                if recs:
-                    for m in recs:
-                        st.write("•", m)
+            if recs:
+                for m in recs:
+                    st.write("•", m)
                 else:
                     _chip("No critical issues detected", "good")
 
