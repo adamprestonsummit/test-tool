@@ -1246,15 +1246,15 @@ if run_btn and default_domain:
     st.plotly_chart(fig2, use_container_width=True)
 
 # ------------------------ Details (one-column accordion) ------------------------
- if results:
-    st.subheader("Details by Site")
-    for i, res in enumerate(results, start=1):
-        header = f"{res.get('_domain')}  |  Overall: {int(res.get('overall_score') or 0)}"
-        with st.expander(header, expanded=(i == 1)):
-            # Top: score chips
-            st.markdown("##### Key Scores")
-            _score_chips(res)
-            st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
+    if results:
+        st.subheader("Details by Site")
+        for i, res in enumerate(results, start=1):
+            header = f"{res.get('_domain')}  |  Overall: {int(res.get('overall_score') or 0)}"
+            with st.expander(header, expanded=(i == 1)):
+                # Top: score chips
+                st.markdown("##### Key Scores")
+                _score_chips(res)
+                st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
             # BASICS
             _kv_section("Basics", [
