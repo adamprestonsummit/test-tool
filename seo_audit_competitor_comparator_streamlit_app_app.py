@@ -1041,6 +1041,8 @@ if run_btn and default_domain:
             use_ai=use_ai,
             topic_hint=topic_hint,
             show_ai_debug=show_ai_debug,
+            psi_strategy=psi_strategy,   # NEW
+            show_psi_debug=show_psi_debug, 
         )
 
         if use_semrush:
