@@ -1136,15 +1136,15 @@ if run_btn and default_domain:
 
  # ------------------------ Details (polished) ------------------------
     if results:
-    st.subheader("Details by Site")
-    for res in results:
-        header_left = f"{res.get('_domain')} — details"
-        header_right = f"Overall: {int(res.get('overall_score') or 0)}"
-        with st.expander(f"{header_left}   |   {header_right}"):
-            # Top row: chips
-            st.markdown("##### Key Scores")
-            _score_chips(res)
-            st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
+        st.subheader("Details by Site")
+        for res in results:
+            header_left = f"{res.get('_domain')} — details"
+            header_right = f"Overall: {int(res.get('overall_score') or 0)}"
+            with st.expander(f"{header_left}   |   {header_right}"):
+                # Top row: chips
+                st.markdown("##### Key Scores")
+                _score_chips(res)
+                st.markdown("<div class='hr'></div>", unsafe_allow_html=True)
 
             # 2-column layout of cards
             col1, col2 = st.columns(2)
