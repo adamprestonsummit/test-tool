@@ -1009,8 +1009,16 @@ with st.sidebar:
     run_btn = st.button("Run audit", type="primary", key="run_audit_btn")
 
     st.divider()
-    st.subheader("Google PSI API (optional)")
-    st.write("Set environment var `PSI_API_KEY` before running for Core Web Vitals + Lighthouse scores.")
+    st.subheader("Google PSI (PageSpeed)")
+
+    psi_key_present = bool(
+        os.environ.get("PSI_API_KEY") or
+        (hasattr(st, "secrets") and "PSI_API_KEY" in st.secrets)
+)
+    st.write(("✅ Key found" if psi_key_present else "❌ Key missing") + " — set env var `PSI_API_KEY`")
+
+    psi_strategy = st.selectbox("Strategy", ["mobile", "desktop"], index=0, key="psi_strategy")
+    show_psi_debug = st.checkbox("Show PSI debug", value=False, key="psi_debug")
 
 # --- Main ---
 if run_btn and default_domain:
