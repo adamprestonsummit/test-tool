@@ -901,8 +901,8 @@ def analyze_page(
 # === app.py (Chunk 3/3) ===============================================
 
 st.set_page_config(page_title="SEO Audit & Competitor Comparator", layout="wide")
-st.title("🔎 SEO Audit & Competitor Comparator")
-st.caption("Audits your homepage for on-page + technical basics, optional CWV via PSI, competitor comparison, and optional OpenAI for semantic checks.")
+st.title("🔎 SEO Page Audit & Competitor Review")
+st.caption("Audits your page for on-page + technical basics, optional CWV via PSI, competitor comparison, and optional OpenAI for semantic checks.")
 
 # --- Polished detail view styles ---
 st.markdown("""
