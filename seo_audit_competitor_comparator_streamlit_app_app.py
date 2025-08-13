@@ -1307,28 +1307,28 @@ if run_btn and default_domain:
                                 ("Good INP %", (res.get("cwv") or {}).get("GOOD_INP_%")),
                             ])
 
-            # AI (optional)
-    if res.get("ai_scores") or res.get("_ai_error"):
-        with st.container(border=True):
-            st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
-        if res.get("ai_scores"):
-            _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
+                # AI (optional)
+                if res.get("ai_scores") or res.get("_ai_error"):
+                    with st.container(border=True):
+                       st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
+                if res.get("ai_scores"):
+                     _kv_section("Scores (AI)", [(k.replace("score_ai_","").upper(), v)
                                         for k, v in res.items() if k.startswith("score_ai_")])
-        ai_f = res.get("ai_findings") or {}
-        if ai_f:
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**Content themes to add**")
-                _bullets(ai_f.get("missing_subtopics"))
-            with c2:
-                st.markdown("**FAQ suggestions**")
-                _bullets(ai_f.get("faq_suggestions"))
-            with c3:
-                st.markdown("**Internal link suggestions**")
-                # Works with either list[str] or list[{anchor,target}]
-                _bullets(ai_f.get("internal_link_suggestions"))
-        if res.get("_ai_error"):
-            _chip(res["_ai_error"], "warn")
+                   ai_f = res.get("ai_findings") or {}
+                if ai_f:
+                  c1, c2, c3 = st.columns(3)
+                with c1:
+                   st.markdown("**Content themes to add**")
+                   _bullets(ai_f.get("missing_subtopics"))
+                with c2:
+                   st.markdown("**FAQ suggestions**")
+                   _bullets(ai_f.get("faq_suggestions"))
+                with c3:
+                   st.markdown("**Internal link suggestions**")
+           # Works with either list[str] or list[{anchor,target}]
+                  _bullets(ai_f.get("internal_link_suggestions"))
+                if res.get("_ai_error"):
+                  _chip(res["_ai_error"], "warn")
 
 
             # Recommendations (always last)
