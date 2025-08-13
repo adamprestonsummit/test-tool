@@ -1340,11 +1340,24 @@ if run_btn and default_domain:
                     _chip("JSON-LD", "good" if res.get("schema_jsonld") else "bad")
 
                 # PSI / CWV
-                if res.get("psi_scores") or res.get("cwv"):
+                if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
                     with st.container(border=True):
-                        st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals (mobile)</div>", unsafe_allow_html=True)
+                        st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>",
+                                    unsafe_allow_html=True)
+
+                        st.markdown("**PSI status**")
+                        st.write({
+                            "ok": (res.get("psi_status") or {}).get("ok"),
+                            "strategy_used": (res.get("psi_status") or {}).get("strategy"),
+                            "http_status": (res.get("psi_status") or {}).get("http_status"),
+                            "api_error": (res.get("psi_status") or {}).get("api_error"),
+                        })
+
                         if res.get("psi_scores"):
-                            _kv_section("Lighthouse categories", [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()])
+                            _kv_section(
+                                "Lighthouse categories",
+                                [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()]
+                            )
                         if res.get("cwv"):
                             _kv_section("CWV", [
                                 ("LCP (ms)", (res.get("cwv") or {}).get("LCP_ms")),
