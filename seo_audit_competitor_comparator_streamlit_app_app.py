@@ -760,24 +760,32 @@ def analyze_page(
 
 
     # Light context to help AI suggest themes/FAQs/internal links
-    headings_texts = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])][:30]
-    anchor_texts = []
-    seen = set()
-    for a in a_tags:
-        href = a.get("href") or ""
-        txt = (a.get_text(" ", strip=True) or "").strip()
+headings_texts = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"])][:30]
+
+anchor_texts: list[str] = []
+seen: set[str] = set()
+
+for a in a_tags:
+    href = a.get("href") or ""
+    txt = (a.get_text(" ", strip=True) or "").strip()
     if is_internal(href, base_domain) and len(txt) >= 4:
         t = txt.lower()
-        if t not in {"click here","read more","learn more","more","here"} and t not in seen:
-            seen.add(t); anchor_texts.append(txt)
-    if len(anchor_texts) >= 40:
-        break
-    extra_ctx = {
-        "final_url": result.get("_final_url") or url,
-        "domain": base_domain,
-        "headings": headings_texts,
-        "sample_internal_anchor_texts": anchor_texts[:40],
-    }
+        if t not in {"click here", "read more", "learn more", "more", "here"} and t not in seen:
+            seen.add(t)
+            anchor_texts.append(txt)
+            if len(anchor_texts) >= 40:
+                break  # <-- must be inside the for loop
+
+# safety cap (just in case)
+anchor_texts = anchor_texts[:40]
+
+extra_ctx = {
+    "final_url": result.get("_final_url") or url,
+    "domain": base_domain,
+    "headings": headings_texts,
+    "sample_internal_anchor_texts": anchor_texts,
+}
+
 
     # Links
     a_tags = soup.find_all("a")
