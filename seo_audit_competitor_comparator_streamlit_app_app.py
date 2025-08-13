@@ -1135,7 +1135,7 @@ if run_btn and default_domain:
     st.plotly_chart(fig2, use_container_width=True)
 
  # ------------------------ Details (polished) ------------------------
-if results:
+    if results:
     st.subheader("Details by Site")
     for res in results:
         header_left = f"{res.get('_domain')} — details"
