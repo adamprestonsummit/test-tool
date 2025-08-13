@@ -1393,22 +1393,27 @@ if run_btn and default_domain:
 
            # --- AI Analysis (scores + findings) ---
         
-    ai_score_keys = [
-        ("INTENT",        "score_ai_intent"),
-        ("COVERAGE",      "score_ai_coverage"),
-        ("EEAT",          "score_ai_eeat"),
-        ("HELPFULNESS",   "score_ai_helpfulness"),
-        ("ORIGINALITY",   "score_ai_originality"),
-        ("TONE",          "score_ai_tone"),
-        ("CONVERSION",    "score_ai_conversion"),
-        ("INTERNAL_LINKS","score_ai_internal_links"),
-    ]
-    has_ai_scores = any(res.get(k) is not None for _, k in ai_score_keys)
-    ai_f = res.get("ai_findings") or {}
+   # --- AI Analysis (scores + findings; one column) ---
+ai_score_keys = [
+    ("INTENT",         "score_ai_intent"),
+    ("COVERAGE",       "score_ai_coverage"),
+    ("EEAT",           "score_ai_eeat"),
+    ("HELPFULNESS",    "score_ai_helpfulness"),
+    ("ORIGINALITY",    "score_ai_originality"),
+    ("TONE",           "score_ai_tone"),
+    ("CONVERSION",     "score_ai_conversion"),
+    ("INTERNAL_LINKS", "score_ai_internal_links"),
+]
 
-    if has_ai_scores or ai_f or res.get("_ai_error"):
-            with st.container(border=True):
-                st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
+# define ai_f **before** any conditionals
+ai_f = res.get("ai_findings") or {}
+has_ai_scores = any(res.get(k) is not None for _, k in ai_score_keys)
+has_ai_findings = any(bool(ai_f.get(k)) for k in
+                      ("missing_subtopics", "faq_suggestions", "internal_link_suggestions"))
+
+if has_ai_scores or has_ai_findings or res.get("_ai_error"):
+    with st.container(border=True):
+        st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
 
         # Scores (colour-graded chips)
         if has_ai_scores:
@@ -1418,7 +1423,7 @@ if run_btn and default_domain:
                 if val is not None:
                     _chip(f"{label}: {int(val)}", _ai_grade(val))
 
-        # Findings (one column, bullets)
+        # Findings (bulleted lists)
         if ai_f.get("missing_subtopics"):
             st.markdown("**Content themes to add**")
             _bullets(ai_f.get("missing_subtopics"))
