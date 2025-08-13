@@ -789,14 +789,14 @@ extra_ctx = {
 
     # Links
 a_tags = soup.find_all("a")
-    internal = 0
-    external = 0
-    for a in a_tags:
-        href = a.get("href") or ""
-        if is_internal(href, base_domain):
-            internal += 1
-        elif href.startswith(("http://", "https://")):
-            external += 1
+internal = 0
+external = 0
+for a in a_tags:
+    href = a.get("href") or ""
+    if is_internal(href, base_domain):
+        internal += 1
+    elif href.startswith(("http://", "https://")):
+        external += 1
 
     # Images
     imgs = soup.find_all("img")
