@@ -814,31 +814,53 @@ def analyze_page(
         "sample_internal_anchor_texts": anchor_texts,
     }
 
-    # PSI (optional)
+        # PSI (optional)
     cwv: Dict[str, Any] = {}
     psi_scores: Dict[str, Any] = {}
-    psi_key = os.environ.get("PSI_API_KEY")
+    psi_status: Dict[str, Any] = {"ok": False, "strategy": psi_strategy}
+
+    psi_key = os.environ.get("PSI_API_KEY") or (st.secrets.get("PSI_API_KEY") if hasattr(st, "secrets") else None)
     try:
         if psi_key:
-            psi_url = (
-                "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
-                f"?url={requests.utils.quote(result.get('_final_url') or url, safe='')}"
-                f"&key={psi_key}&category=performance&category=seo&category=accessibility&category=pwa&strategy=mobile"
-            )
-            r, err = http_get(psi_url)
-            if r and r.status_code == 200:
+            # Try requested strategy; if mobile fails, optionally fall back to desktop
+            strategies = [psi_strategy] if psi_strategy == "desktop" else ["mobile", "desktop"]
+
+            for strat in strategies:
+                psi_url = (
+                    "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+                    f"?url={requests.utils.quote(result.get('_final_url') or url, safe='')}"
+                    f"&key={psi_key}&category=performance&category=seo&category=accessibility&category=pwa&strategy={strat}"
+                )
+                r = requests.get(psi_url, timeout=30)
+                psi_status.update({"http_status": getattr(r, "status_code", None), "strategy": strat})
+
+                if not r or r.status_code != 200:
+                    psi_status["api_error"] = getattr(r, "text", "")[:200]
+                    continue
+
                 data = r.json()
+                if "error" in data:
+                    psi_status["api_error"] = (data.get("error", {}) or {}).get("message")
+                    continue
+
                 lh = data.get("lighthouseResult", {})
-                cats = lh.get("categories", {})
+                if not lh:
+                    psi_status["api_error"] = "No lighthouseResult in response"
+                    continue
+
+                cats = lh.get("categories", {}) or {}
                 for k, v in cats.items():
-                    if isinstance(v, dict) and "score" in v and v["score"] is not None:
+                    if isinstance(v, dict) and v.get("score") is not None:
                         psi_scores[k] = round(float(v["score"]) * 100)
-                metrics = data.get("loadingExperience", {}).get("metrics", {})
+
+                metrics = data.get("loadingExperience", {}).get("metrics", {}) or {}
+
                 def pct_good(key):
                     m = metrics.get(key, {})
                     d = m.get("distributions", [])
                     good = next((x for x in d if x.get("min") == 0), None)
                     return int(round((good.get("proportion", 0) * 100))) if good else None
+
                 cwv = {
                     "LCP_ms": (lh.get("audits", {}).get("largest-contentful-paint", {}).get("numericValue")),
                     "CLS": (lh.get("audits", {}).get("cumulative-layout-shift", {}).get("numericValue")),
@@ -847,6 +869,19 @@ def analyze_page(
                     "GOOD_CLS_%": pct_good("CUMULATIVE_LAYOUT_SHIFT"),
                     "GOOD_INP_%": pct_good("INTERACTION_TO_NEXT_PAINT"),
                 }
+
+                psi_status["ok"] = True
+                break  # success, no need to try other strategy
+        else:
+            psi_status["api_error"] = "Missing PSI_API_KEY"
+    except Exception as e:
+        psi_status["exception"] = repr(e)
+
+    if show_psi_debug:
+        st.write({"PSI_STATUS": psi_status})
+
+    result.update({"psi_scores": psi_scores, "cwv": cwv, "psi_status": psi_status})
+
     except Exception:
         pass
 
