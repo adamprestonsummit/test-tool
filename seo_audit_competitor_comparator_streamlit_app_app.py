@@ -706,11 +706,15 @@ def generate_recommendations(r: Dict[str, Any]) -> List[str]:
 
 # ----------------------------- Analysis -----------------------------
 def analyze_page(
+    def analyze_page(
     url: str,
     use_ai: bool = False,
     topic_hint: Optional[str] = None,
     show_ai_debug: bool = False,
+    psi_strategy: str = "mobile",          # NEW
+    show_psi_debug: bool = False,          # NEW
 ) -> Dict[str, Any]:
+
     html, fetch_meta = get_home_html(url)
     result: Dict[str, Any] = {
         "_url": url,
@@ -1041,7 +1045,7 @@ if run_btn and default_domain:
             use_ai=use_ai,
             topic_hint=topic_hint,
             show_ai_debug=show_ai_debug,
-            psi_strategy=psi_strategy,   # NEW
+            psi_strategy=psi_strategy,
             show_psi_debug=show_psi_debug, 
         )
 
