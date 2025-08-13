@@ -1328,7 +1328,7 @@ if run_btn and default_domain:
            # Works with either list[str] or list[{anchor,target}]
                 _bullets(ai_f.get("internal_link_suggestions"))
                 if res.get("_ai_error"):
-                _chip(res["_ai_error"], "warn")
+                 _chip(res["_ai_error"], "warn")
 
 
             # Recommendations (always last)
