@@ -1392,37 +1392,48 @@ if run_btn and default_domain:
             ])
 
            # --- AI Analysis (scores + findings) ---
-            if res.get("ai_scores"):
-                st.markdown("<div class='section-title'>Scores (AI)</div>", unsafe_allow_html=True)
-                for label, key in [
-                    ("INTENT", "score_ai_intent"),
-                    ("COVERAGE", "score_ai_coverage"),
-                    ("EEAT", "score_ai_eeat"),
-                    ("HELPFULNESS", "score_ai_helpfulness"),
-                    ("ORIGINALITY", "score_ai_originality"),
-                    ("TONE", "score_ai_tone"),
-                    ("CONVERSION", "score_ai_conversion"),
-                    ("INTERNAL_LINKS", "score_ai_internal_links"),
-                ]:
-                    val = res.get(key)
-                    if val is not None:
-                        _chip(f"{label}: {int(val)}", _ai_grade(val))
+        
+    ai_score_keys = [
+        ("INTENT",        "score_ai_intent"),
+        ("COVERAGE",      "score_ai_coverage"),
+        ("EEAT",          "score_ai_eeat"),
+        ("HELPFULNESS",   "score_ai_helpfulness"),
+        ("ORIGINALITY",   "score_ai_originality"),
+        ("TONE",          "score_ai_tone"),
+        ("CONVERSION",    "score_ai_conversion"),
+        ("INTERNAL_LINKS","score_ai_internal_links"),
+    ]
+    has_ai_scores = any(res.get(k) is not None for _, k in ai_score_keys)
+    ai_f = res.get("ai_findings") or {}
 
-            # Findings (one column, bullets)
-            if ai_f.get("missing_subtopics"):
-                st.markdown("**Content themes to add**")
-                _bullets(ai_f.get("missing_subtopics"))
+    if has_ai_scores or ai_f or res.get("_ai_error"):
+            with st.container(border=True):
+                st.markdown("<div class='section-title'>AI Analysis (ChatGPT)</div>", unsafe_allow_html=True)
 
-            if ai_f.get("faq_suggestions"):
-                st.markdown("**FAQ suggestions**")
-                _bullets(ai_f.get("faq_suggestions"))
+        # Scores (colour-graded chips)
+        if has_ai_scores:
+            st.markdown("**Scores (AI)**")
+            for label, key in ai_score_keys:
+                val = res.get(key)
+                if val is not None:
+                    _chip(f"{label}: {int(val)}", _ai_grade(val))
 
-            if ai_f.get("internal_link_suggestions"):
-                st.markdown("**Internal link suggestions**")
-                _bullets(ai_f.get("internal_link_suggestions"))
+        # Findings (one column, bullets)
+        if ai_f.get("missing_subtopics"):
+            st.markdown("**Content themes to add**")
+            _bullets(ai_f.get("missing_subtopics"))
 
-            if res.get("_ai_error"):
-                _chip(res["_ai_error"], "warn")
+        if ai_f.get("faq_suggestions"):
+            st.markdown("**FAQ suggestions**")
+            _bullets(ai_f.get("faq_suggestions"))
+
+        if ai_f.get("internal_link_suggestions"):
+            st.markdown("**Internal link suggestions**")
+            _bullets(ai_f.get("internal_link_suggestions"))
+
+        if res.get("_ai_error"):
+            _chip(res["_ai_error"], "warn")
+
 
             # RECOMMENDATIONS
             with st.container(border=True):
