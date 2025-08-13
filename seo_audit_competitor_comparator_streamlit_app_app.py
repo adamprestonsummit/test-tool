@@ -1376,7 +1376,7 @@ if run_btn and default_domain:
                             [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()]
                         )
             if res.get("cwv"):
-            cwv = res.get("cwv") or {}
+                cwv = res.get("cwv") or {}
 
             # Vital chips (3 dp + graded)
             st.markdown("**Core Web Vitals**")
