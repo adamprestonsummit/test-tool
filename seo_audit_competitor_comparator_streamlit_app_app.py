@@ -514,18 +514,25 @@ def score_images_alt(ratio: float) -> int:
 def score_tech(meta: Dict[str, Any]) -> int:
     pts = 0
     total = 0
+
     def add(cond, weight):
         nonlocal pts, total
         total += weight
-        if cond:
+        if bool(cond):
             pts += weight
-    add(meta.get("https", False), 2)
-    add(meta.get("status_code", 0) < 400, 2)
-    add(meta.get("robots_exists", False), 2)
-    add(meta.get("sitemap_exists", False), 2)
-    add(meta.get("viewport_meta", False), 1)
-    add(not meta.get("noindex", False), 2)
+
+    # Defensive reads
+    sc = meta.get("status_code")
+    status_ok = (isinstance(sc, (int, float)) and sc < 400)  # guards None
+
+    add(bool(meta.get("https")), 2)
+    add(status_ok, 2)
+    add(bool(meta.get("robots_exists")), 2)
+    add(bool(meta.get("sitemap_exists")), 2)
+    add(bool(meta.get("viewport_meta")), 1)
+    add(not bool(meta.get("noindex")), 2)
     add((meta.get("elapsed_ms") or 9999) < 1200, 1)
+
     return int(round((pts / max(total, 1)) * 100))
 
 def score_social(meta: Dict[str, Any]) -> int:
