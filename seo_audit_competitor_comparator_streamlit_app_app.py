@@ -1368,8 +1368,8 @@ if run_btn and default_domain:
 
             # PSI / CWV
     if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
-    with st.container(border=True):
-        st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>", unsafe_allow_html=True)
 
         # PSI status
         psi_status = res.get("psi_status") or {}
