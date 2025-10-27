@@ -1367,7 +1367,7 @@ if run_btn and default_domain:
                 _chip("JSON-LD", "good" if res.get("schema_jsonld") else "bad")
 
             # PSI / CWV
-      if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
+    if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
     with st.container(border=True):
         st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>", unsafe_allow_html=True)
 
