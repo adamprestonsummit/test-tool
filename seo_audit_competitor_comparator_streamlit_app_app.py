@@ -1367,37 +1367,45 @@ if run_btn and default_domain:
                 _chip("JSON-LD", "good" if res.get("schema_jsonld") else "bad")
 
             # PSI / CWV
-            if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
-                with st.container(border=True):
-                    st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>", unsafe_allow_html=True)
-                    st.markdown("**PSI status**")
-                    st.write({
-                        "ok": (res.get("psi_status") or {}).get("ok"),
-                        "strategy_used": (res.get("psi_status") or {}).get("strategy"),
-                        "http_status": (res.get("psi_status") or {}).get("http_status"),
-                        "api_error": (res.get("psi_status") or {}).get("api_error"),
-                    })
-                    if res.get("psi_scores"):
-                        _kv_section(
-                            "Lighthouse categories",
-                            [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()]
-                        )
-            if res.get("cwv"):
-                cwv = res.get("cwv") or {}
+      if res.get("psi_scores") or res.get("cwv") or res.get("psi_status"):
+    with st.container(border=True):
+        st.markdown("<div class='section-title'>Lighthouse & Core Web Vitals</div>", unsafe_allow_html=True)
 
-            # Vital chips (3 dp + graded)
+        # PSI status
+        psi_status = res.get("psi_status") or {}
+        st.markdown("**PSI status**")
+        st.write({
+            "ok": psi_status.get("ok"),
+            "strategy_used": psi_status.get("strategy"),
+            "http_status": psi_status.get("http_status"),
+            "api_error": psi_status.get("api_error"),
+        })
+
+        # Lighthouse categories
+        if res.get("psi_scores"):
+            _kv_section(
+                "Lighthouse categories",
+                [(k.upper(), v) for k, v in (res.get("psi_scores") or {}).items()]
+            )
+
+        # ---- Core Web Vitals (safe) ----
+        cwv_local = res.get("cwv") or {}
+        if cwv_local:
             st.markdown("**Core Web Vitals**")
-            for label, key in [("LCP (ms)", "LCP_ms"), ("CLS", "CLS"), ("INP (ms)", "INP_ms")]:
-                v = cwv.get(key)
-                _chip(f"{label}: {_fmt3(v)}", _cwv_grade(key, v))
+            for label, metric_key in [("LCP (ms)", "LCP_ms"), ("CLS", "CLS"), ("INP (ms)", "INP_ms")]:
+                v = cwv_local.get(metric_key)
+                if v is None:
+                    _chip(f"{label}: —", "warn")
+                else:
+                    _chip(f"{label}: {_fmt3(v)}", _cwv_grade(metric_key, v))
 
-            # Keep the Page Experience “% good” breakdown
-            _kv_section("CWV distribution (Page Experience % good)", [
-                ("Good LCP %", cwv.get("GOOD_LCP_%")),
-                ("Good CLS %", cwv.get("GOOD_CLS_%")),
-                ("Good INP %", cwv.get("GOOD_INP_%")),
-            ])
-
+            # % good breakdown (only if any exist)
+            if any(cwv_local.get(k) is not None for k in ("GOOD_LCP_%", "GOOD_CLS_%", "GOOD_INP_%")):
+                _kv_section("CWV distribution (Page Experience % good)", [
+                    ("Good LCP %", cwv_local.get("GOOD_LCP_%")),
+                    ("Good CLS %", cwv_local.get("GOOD_CLS_%")),
+                    ("Good INP %", cwv_local.get("GOOD_INP_%")),
+                ])
            # --- AI Analysis (scores + findings) ---
         
    # --- AI Analysis (scores + findings; one column) ---
