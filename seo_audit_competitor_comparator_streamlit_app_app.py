@@ -1,12 +1,3 @@
-# === app.py (Chunk 1/3) ===============================================
-# SEO Audit & Competitor Comparator — Streamlit App (OpenAI optional)
-# Run locally:
-#   1) pip install -U streamlit requests beautifulsoup4 lxml tldextract plotly python-dateutil pandas
-#   2) (optional) export PSI_API_KEY="<your-google-pagespeed-insights-api-key>"
-#   3) (optional) export OPENAI_API_KEY="<your-openai-api-key>"
-#   4) streamlit run app.py
-# ======================================================================
-
 from __future__ import annotations
 
 import os
