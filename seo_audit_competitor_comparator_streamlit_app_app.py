@@ -1250,7 +1250,7 @@ if run_btn and default_domain:
         "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
     }
 
-        flat_results.append(row)
+    flat_results.append(row)
 
     df_summary = pd.DataFrame(flat_results)
 
