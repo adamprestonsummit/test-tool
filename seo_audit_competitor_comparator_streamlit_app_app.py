@@ -1206,7 +1206,7 @@ if run_btn and default_domain:
     status.write("Done.")
 
     # ------------------------ SUMMARY TABLE ------------------------
-        sm = res.get("semrush", {})
+    sm = res.get("semrush", {})
         row = {
             "Domain": res.get("_domain"),
             "Final URL": res.get("_final_url") or res.get("_url"),
