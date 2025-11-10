@@ -1207,48 +1207,48 @@ if run_btn and default_domain:
 
     # ------------------------ SUMMARY TABLE ------------------------
     sm = res.get("semrush", {})
-        row = {
-            "Domain": res.get("_domain"),
-            "Final URL": res.get("_final_url") or res.get("_url"),
-            "HTTP Status": res.get("status_code"),
-            "Load (ms)": res.get("elapsed_ms"),
-            "Title len": res.get("title_len"),
-            "Meta len": res.get("meta_desc_len"),
-            "H1s": res.get("h1_count"),
-            "Alt ratio": res.get("img_alt_ratio"),
-            "Tech": res.get("score_tech"),
-            "Perf": res.get("score_performance"),
-            "Social": res.get("score_social"),
-            "Overall": res.get("overall_score"),
+    row = {
+        "Domain": res.get("_domain"),
+        "Final URL": res.get("_final_url") or res.get("_url"),
+        "HTTP Status": res.get("status_code"),
+        "Load (ms)": res.get("elapsed_ms"),
+        "Title len": res.get("title_len"),
+        "Meta len": res.get("meta_desc_len"),
+        "H1s": res.get("h1_count"),
+        "Alt ratio": res.get("img_alt_ratio"),
+        "Tech": res.get("score_tech"),
+        "Perf": res.get("score_performance"),
+        "Social": res.get("score_social"),
+        "Overall": res.get("overall_score"),
 
-            # Semrush (optional, normalised for new Analytics API)
-            "Backlinks (Domain)": (
-                (sm.get("backlinks_domain") or {}).get("backlinks")
-                or (sm.get("backlinks_domain") or {}).get("total")
-                or "N/A"
-            ),
-            "Backlinks (URL)": (
-                (sm.get("backlinks_url") or {}).get("backlinks")
-                or (sm.get("backlinks_url") or {}).get("total")
-                or "N/A"
-            ),
-            "Ref Domains (Domain)": (
-                (sm.get("backlinks_domain") or {}).get("refdomains")
-                or (sm.get("backlinks_domain") or {}).get("domains_num")
-                or sm.get("refdomains_domain_count")
-                or "N/A"
-            ),
-            "Ref Domains (URL)": (
-                (sm.get("backlinks_url") or {}).get("refdomains")
-                or (sm.get("backlinks_url") or {}).get("domains_num")
-                or sm.get("refdomains_url_count")
-                or "N/A"
-            ),
-            "Organic Traffic UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot", "N/A"),
-            "MoM Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_mom_%", "N/A"),
-            "YoY Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_yoy_%", "N/A"),
-            "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
-        }
+        # Semrush (optional, normalised for new Analytics API)
+        "Backlinks (Domain)": (
+            (sm.get("backlinks_domain") or {}).get("backlinks")
+            or (sm.get("backlinks_domain") or {}).get("total")
+            or "N/A"
+        ),
+        "Backlinks (URL)": (
+            (sm.get("backlinks_url") or {}).get("backlinks")
+            or (sm.get("backlinks_url") or {}).get("total")
+            or "N/A"
+        ),
+        "Ref Domains (Domain)": (
+            (sm.get("backlinks_domain") or {}).get("refdomains")
+            or (sm.get("backlinks_domain") or {}).get("domains_num")
+            or sm.get("refdomains_domain_count")
+            or "N/A"
+        ),
+        "Ref Domains (URL)": (
+            (sm.get("backlinks_url") or {}).get("refdomains")
+            or (sm.get("backlinks_url") or {}).get("domains_num")
+            or sm.get("refdomains_url_count")
+            or "N/A"
+        ),
+        "Organic Traffic UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot", "N/A"),
+        "MoM Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_mom_%", "N/A"),
+        "YoY Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_yoy_%", "N/A"),
+        "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
+    }
 
         flat_results.append(row)
 
