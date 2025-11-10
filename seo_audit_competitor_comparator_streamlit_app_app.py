@@ -260,7 +260,8 @@ def _ai_grade(score) -> str:
 
 
 # ----------------------------- Semrush helpers -----------------------------
-SEMRUSH_BASE = "https://api.semrush.com/"
+# New Analytics/Backlinks API base
+SEMRUSH_BASE = "https://api.semrush.com/analytics/v1/"
 
 def semrush_get(report_type: str, params: dict, timeout: int = 30) -> list[dict] | None:
     api_key = _get_semrush_key()
@@ -269,10 +270,11 @@ def semrush_get(report_type: str, params: dict, timeout: int = 30) -> list[dict]
     q = {"type": report_type, "key": api_key, **params}
     try:
         r = requests.get(SEMRUSH_BASE, params=q, timeout=timeout)
+        # Basic error handling – Semrush still returns CSV here
         if r.status_code != 200 or not r.text or "ERROR" in r.text[:30].upper():
             return None
-        buf = io.StringIO(r.text)  # Semrush returns CSV
-        rows = list(csv.DictReader(buf))
+        buf = io.StringIO(r.text)
+        rows = list(csv.DictReader(buf, delimiter=";"))  # Analytics API uses ';'
         return rows
     except Exception:
         return None
@@ -331,11 +333,32 @@ def keyword_research_with_volumes(topic_hint: str, database: str = "uk") -> list
     return semrush_keyword_volumes(seeds, database=database) or []
 
 def semrush_backlinks_overview(target: str, target_type: str = "root_domain") -> dict | None:
+    """
+    Backlink overview using the new Analytics Backlinks API.
+
+    We normalise `total` -> `backlinks` and `domains_num` -> `refdomains`
+    so the rest of the app can keep using the older field names.
+    """
     rows = semrush_get("backlinks_overview", {"target": target, "target_type": target_type})
-    return rows[0] if rows else None
+    if not rows:
+        return None
+
+    row = rows[0]  # Semrush overview is a single-row CSV
+
+    # Normalise new column names to legacy ones used in the UI
+    if "total" in row and "backlinks" not in row:
+        row["backlinks"] = row["total"]
+    if "domains_num" in row and "refdomains" not in row:
+        row["refdomains"] = row["domains_num"]
+
+    return row
 
 def semrush_refdomains_count(target: str, target_type: str = "root_domain") -> int | None:
-    rows = semrush_get("backlinks_refdomains", {"target": target, "target_type": target_type, "export_columns": "refdomain"})
+    # Still fine: we just count rows returned
+    rows = semrush_get(
+        "backlinks_refdomains",
+        {"target": target, "target_type": target_type, "export_columns": "refdomain"}
+    )
     return len(rows) if rows is not None else None
 
 def semrush_domain_overview(domain: str, database: str = "uk", display_date: str | None = None) -> dict | None:
@@ -349,12 +372,6 @@ def semrush_domain_mom_yoy(domain: str, database: str = "uk") -> dict | None:
     """
     Pull current, previous month, and previous year (same month) Or/Ot
     from Semrush and compute MoM / YoY deltas.
-
-    Returns a dict with keys:
-      - Or, Ot                (current organic keywords / traffic)
-      - Or_mom_%, Ot_mom_%    (month-over-month % change)
-      - Or_yoy_%, Ot_yoy_%    (year-over-year % change)
-      - _dates: {this, mom, yoy}
     """
     anchor = last_full_month_anchor()
     this_m = anchor.strftime("%Y-%m-15")
@@ -393,13 +410,17 @@ def semrush_domain_mom_yoy(domain: str, database: str = "uk") -> dict | None:
     }
 
 def semrush_url_keywords_count(url: str, database: str = "uk") -> int | None:
-    rows = semrush_get("url_organic", {"url": url, "database": database, "display_limit": 1000, "export_columns": "Ph,Po"})
+    rows = semrush_get(
+        "url_organic",
+        {"url": url, "database": database, "display_limit": 1000, "export_columns": "Ph,Po"}
+    )
     return len(rows) if rows is not None else None
 
 def semrush_keyword_volumes(keywords: list[str], database: str = "uk") -> list[dict] | None:
     kws = ",".join(kw.strip() for kw in keywords if kw.strip())[:5000]
     rows = semrush_get("phrase_all", {"phrase": kws, "database": database, "export_columns": "Ph,Nq,Kd"})
     return rows
+
 
 # ----------------------------- Content & Structure Analysis -----------------------------
 def visible_text_from_soup(soup: BeautifulSoup) -> str:
@@ -1185,9 +1206,7 @@ if run_btn and default_domain:
     status.write("Done.")
 
     # ------------------------ SUMMARY TABLE ------------------------
-    flat_results = []
-    for res in results:
-        sm = res.get("semrush", {})
+           sm = res.get("semrush", {})
         row = {
             "Domain": res.get("_domain"),
             "Final URL": res.get("_final_url") or res.get("_url"),
@@ -1202,16 +1221,35 @@ if run_btn and default_domain:
             "Social": res.get("score_social"),
             "Overall": res.get("overall_score"),
 
-            # Semrush (optional)
-            "Backlinks (Domain)": (sm.get("backlinks_domain", {}) or {}).get("backlinks", "N/A"),
-            "Backlinks (URL)": (sm.get("backlinks_url", {}) or {}).get("backlinks", "N/A"),
-            "Ref Domains (Domain)": sm.get("refdomains_domain_count", "N/A"),
-            "Ref Domains (URL)": sm.get("refdomains_url_count", "N/A"),
+            # Semrush (optional, normalised for new Analytics API)
+            "Backlinks (Domain)": (
+                (sm.get("backlinks_domain") or {}).get("backlinks")
+                or (sm.get("backlinks_domain") or {}).get("total")
+                or "N/A"
+            ),
+            "Backlinks (URL)": (
+                (sm.get("backlinks_url") or {}).get("backlinks")
+                or (sm.get("backlinks_url") or {}).get("total")
+                or "N/A"
+            ),
+            "Ref Domains (Domain)": (
+                (sm.get("backlinks_domain") or {}).get("refdomains")
+                or (sm.get("backlinks_domain") or {}).get("domains_num")
+                or sm.get("refdomains_domain_count")
+                or "N/A"
+            ),
+            "Ref Domains (URL)": (
+                (sm.get("backlinks_url") or {}).get("refdomains")
+                or (sm.get("backlinks_url") or {}).get("domains_num")
+                or sm.get("refdomains_url_count")
+                or "N/A"
+            ),
             "Organic Traffic UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot", "N/A"),
             "MoM Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_mom_%", "N/A"),
             "YoY Change UK": (sm.get("domain_organic_uk", {}) or {}).get("Ot_yoy_%", "N/A"),
             "Keywords (URL, UK)": sm.get("url_keywords_uk", "N/A"),
         }
+
         flat_results.append(row)
 
     df_summary = pd.DataFrame(flat_results)
