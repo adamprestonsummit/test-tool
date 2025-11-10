@@ -345,6 +345,53 @@ def semrush_domain_overview(domain: str, database: str = "uk", display_date: str
     rows = semrush_get("domain_ranks", params)
     return rows[0] if rows else None
 
+def semrush_domain_mom_yoy(domain: str, database: str = "uk") -> dict | None:
+    """
+    Pull current, previous month, and previous year (same month) Or/Ot
+    from Semrush and compute MoM / YoY deltas.
+
+    Returns a dict with keys:
+      - Or, Ot                (current organic keywords / traffic)
+      - Or_mom_%, Ot_mom_%    (month-over-month % change)
+      - Or_yoy_%, Ot_yoy_%    (year-over-year % change)
+      - _dates: {this, mom, yoy}
+    """
+    anchor = last_full_month_anchor()
+    this_m = anchor.strftime("%Y-%m-15")
+    prev_m = months_ago(anchor, 1).strftime("%Y-%m-15")
+    prev_y = months_ago(anchor, 12).strftime("%Y-%m-15")
+
+    cur = semrush_domain_overview(domain, database, this_m) or {}
+    mo  = semrush_domain_overview(domain, database, prev_m) or {}
+    yo  = semrush_domain_overview(domain, database, prev_y) or {}
+
+    def as_int(x):
+        try:
+            return int(float(x))
+        except Exception:
+            return None
+
+    Or_cur, Ot_cur = as_int(cur.get("Or")), as_int(cur.get("Ot"))
+    Or_mo,  Ot_mo  = as_int(mo.get("Or")),  as_int(mo.get("Ot"))
+    Or_yo,  Ot_yo  = as_int(yo.get("Or")),  as_int(yo.get("Ot"))
+
+    def delta(cur_v, old_v):
+        if cur_v is None or old_v is None:
+            return None
+        if old_v == 0:
+            return None
+        return round((cur_v - old_v) / old_v * 100, 1)
+
+    return {
+        "Or": Or_cur,
+        "Ot": Ot_cur,
+        "Or_mom_%": delta(Or_cur, Or_mo),
+        "Ot_mom_%": delta(Ot_cur, Ot_mo),
+        "Or_yoy_%": delta(Or_cur, Or_yo),
+        "Ot_yoy_%": delta(Ot_cur, Ot_yo),
+        "_dates": {"this": this_m, "mom": prev_m, "yoy": prev_y},
+    }
+
 def semrush_url_keywords_count(url: str, database: str = "uk") -> int | None:
     rows = semrush_get("url_organic", {"url": url, "database": database, "display_limit": 1000, "export_columns": "Ph,Po"})
     return len(rows) if rows is not None else None
