@@ -18,6 +18,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 
 # ─────────────────────────────────────────────
 # Config
@@ -39,7 +43,7 @@ def _key(name: str) -> Optional[str]:
     )
 
 def _get_semrush_key() -> Optional[str]:  return _key("SEMRUSH_API_KEY")
-def _get_openai_key()  -> Optional[str]:  return _key("OPENAI_API_KEY")
+def _get_gemini_key()  -> Optional[str]:  return _key("GEMINI_API_KEY")
 
 # ─────────────────────────────────────────────
 # HTTP / URL utils
@@ -98,27 +102,74 @@ def find_meta(soup: BeautifulSoup, name=None, prop=None) -> Optional[str]:
         if el and el.get("content"): return el["content"].strip()
     return None
 
-def has_json_ld(soup: BeautifulSoup) -> bool:
+def has_json_ld(soup: BeautifulSoup, raw_html: str = "") -> bool:
     for tag in soup.find_all("script", {"type": "application/ld+json"}):
         try:
             json.loads(tag.string or "{}"); return True
         except: pass
+    # Fallback regex
+    if raw_html:
+        import re as _re
+        blobs = _re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            raw_html, _re.DOTALL | _re.IGNORECASE
+        )
+        for b in blobs:
+            try: json.loads(b.strip()); return True
+            except: pass
     return False
 
-def get_json_ld_types(soup: BeautifulSoup) -> List[str]:
+def get_json_ld_types(soup: BeautifulSoup, raw_html: str = "") -> List[str]:
+    """Extract all schema @type values. Falls back to regex on raw HTML for JS-injected schema."""
     types = []
+
+    def _collect_types(obj, depth=0):
+        if depth > 5: return
+        if isinstance(obj, dict):
+            t = obj.get("@type")
+            if t:
+                if isinstance(t, list):
+                    for x in t: types.append(str(x))
+                else:
+                    types.append(str(t))
+            for v in obj.values():
+                _collect_types(v, depth+1)
+        elif isinstance(obj, list):
+            for item in obj:
+                _collect_types(item, depth+1)
+
+    # Strategy 1: BeautifulSoup parsed tags
     for tag in soup.find_all("script", {"type": "application/ld+json"}):
-        try:
-            data = json.loads(tag.string or "{}")
-            if isinstance(data, list):
-                for item in data:
-                    t = item.get("@type")
-                    if t: types.append(t if isinstance(t, str) else str(t))
-            elif isinstance(data, dict):
-                t = data.get("@type")
-                if t: types.append(t if isinstance(t, str) else str(t))
-        except: pass
-    return types
+        txt = tag.string or tag.get_text()
+        if txt and txt.strip():
+            try:
+                _collect_types(json.loads(txt))
+            except Exception:
+                pass
+
+    # Strategy 2: regex on raw HTML (catches lazy-loaded / escaped schema)
+    if not types and raw_html:
+        import re as _re
+        blobs = _re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            raw_html, _re.DOTALL | _re.IGNORECASE
+        )
+        for blob in blobs:
+            blob = blob.strip()
+            if not blob: continue
+            try:
+                _collect_types(json.loads(blob))
+            except Exception:
+                # Try stripping HTML entities / CDATA
+                cleaned = _re.sub(r"<!\[CDATA\[|\]\]>", "", blob).strip()
+                try: _collect_types(json.loads(cleaned))
+                except: pass
+
+    # Deduplicate, preserve order
+    seen = set(); result = []
+    for t in types:
+        if t not in seen: seen.add(t); result.append(t)
+    return result
 
 def get_robots_txt(url: str) -> Dict[str, Any]:
     meta = {"exists": False, "sitemaps": [], "disallow_count": 0, "error": None}
@@ -225,7 +276,7 @@ def js_reliance(soup: BeautifulSoup, html_bytes: Optional[int]) -> Dict[str, Any
 # ─────────────────────────────────────────────
 # AEO-specific checks
 # ─────────────────────────────────────────────
-def aeo_checks(soup: BeautifulSoup, visible: str) -> Dict[str, Any]:
+def aeo_checks(soup: BeautifulSoup, visible: str, raw_html: str = "") -> Dict[str, Any]:
     """Answer Engine Optimisation signals"""
     # FAQ patterns
     faq_schema = any(t in ["FAQPage", "QAPage"] for t in get_json_ld_types(soup))
@@ -241,7 +292,7 @@ def aeo_checks(soup: BeautifulSoup, visible: str) -> Dict[str, Any]:
     definition_patterns = bool(re.search(r"(?i)(\bis\b.*defined as|\bmeaning of\b|\bwhat is\b)", visible[:3000]))
 
     # Entities & structured data
-    schema_types = get_json_ld_types(soup)
+    schema_types = get_json_ld_types(soup, raw_html)
     breadcrumb = "BreadcrumbList" in schema_types
     review_schema = any("Review" in t or "AggregateRating" in t for t in schema_types)
     local_business = "LocalBusiness" in schema_types or "Organization" in schema_types
@@ -355,13 +406,29 @@ def semrush_mom_yoy(domain: str, database: str = "uk") -> Optional[dict]:
             "_dates": {"this": this_m, "mom": prev_m, "yoy": prev_y}}
 
 # ─────────────────────────────────────────────
-# OpenAI / AI analysis
+# Gemini AI analysis
 # ─────────────────────────────────────────────
+def _gemini_generate(prompt: str, debug: bool = False) -> Optional[str]:
+    """Call Gemini 2.5 Flash and return the raw text response."""
+    import google.generativeai as genai
+    api_key = _get_gemini_key()
+    if not api_key:
+        if debug: st.write("DEBUG: No GEMINI_API_KEY")
+        return None
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        resp = model.generate_content(prompt)
+        return resp.text
+    except Exception as e:
+        if debug: st.write("Gemini error:", repr(e))
+        return None
+
 def ai_analyze(page_text: str, topic_hint: str = None,
                extra_context: dict = None, debug: bool = False) -> Optional[dict]:
-    api_key = _get_openai_key()
+    api_key = _get_gemini_key()
     if not api_key:
-        if debug: st.write("DEBUG: No OPENAI_API_KEY")
+        if debug: st.write("DEBUG: No GEMINI_API_KEY")
         return None
     text = (page_text or "").strip()[:20000]
     schema = {
@@ -378,56 +445,51 @@ def ai_analyze(page_text: str, topic_hint: str = None,
         }
     }
     prompt = (
-        "Return ONLY compact JSON matching this schema (no markdown, no preamble):\n"
+        "You are an SEO and AEO content analyst. Return ONLY compact JSON matching this schema "
+        "(no markdown fences, no preamble, no explanation):\n"
         f"{json.dumps(schema)}\n\n"
         f"Topic hint: {topic_hint or '(none)'}\n"
-        f"Context: {json.dumps(extra_context or {})}\n\n"
-        "Score all 0-100. For aeo_readiness score how well the page answers direct questions for AI/voice. "
-        "Populate all list fields with 5-10 items each.\n\nText:\n<<<\n" + text + "\n>>>"
+        f"Context (URL, headings, schema types): {json.dumps(extra_context or {})}\n\n"
+        "SCORING RULES:\n"
+        "- All scores 0-100.\n"
+        "- aeo_readiness: how well the page lets AI/search extract a direct factual answer.\n"
+        "- intent_match: does the content directly serve the user's search intent?\n"
+        "- eeat: evidence of Experience, Expertise, Authoritativeness, Trustworthiness.\n"
+        "- content_depth: breadth and depth of topic coverage vs what a user needs.\n\n"
+        "LIST FIELDS — populate each with 5-8 concrete, page-specific, actionable items:\n"
+        "- missing_subtopics: specific content themes this page is missing (e.g. 'Price comparison table').\n"
+        "- faq_suggestions: user questions this page should answer directly (e.g. 'How long does installation take?').\n"
+        "- aeo_opportunities: specific structural changes to win featured snippets or AI Overviews "
+        "(e.g. 'Add a 50-word definition of [term] in a <p> tag directly under the H1').\n"
+        "- schema_recommendations: specific schema types not yet present (e.g. 'FAQPage', 'HowTo').\n"
+        "- internal_link_suggestions: objects with {anchor, target} for useful internal links.\n"
+        "- copy_suggestions: specific copy improvements for conversion or clarity.\n\n"
+        "Text to analyse:\n<<<\n" + text + "\n>>>"
     )
+    raw = _gemini_generate(prompt, debug=debug)
+    if not raw: return None
     try:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "gpt-4o-mini",
-                  "messages": [{"role": "system", "content": "SEO/AEO analyst. Return ONLY valid JSON."},
-                                {"role": "user", "content": prompt}],
-                  "temperature": 0.2},
-            timeout=45
-        )
-        if debug: st.write("OpenAI status:", resp.status_code)
-        if resp.status_code != 200:
-            if debug: st.write(resp.text[:500]); return None
-        raw = (resp.json().get("choices", [{}])[0].get("message", {}) or {}).get("content", "") or ""
         raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        start = raw.find("{"); end = raw.rfind("}")
+        if start != -1 and end > start: raw = raw[start:end+1]
         return json.loads(raw)
     except Exception as e:
-        if debug: st.write("AI error:", repr(e))
+        if debug: st.write("Gemini JSON parse error:", repr(e))
         return None
 
 def ai_keyword_seeds(topic: str, n: int = 30) -> List[str]:
-    api_key = _get_openai_key()
-    if not api_key or not topic: return []
-    try:
-        resp = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={"model": "gpt-4o-mini",
-                  "messages": [
-                      {"role": "system", "content": "Concise UK English SEO keyword assistant."},
-                      {"role": "user", "content":
-                       f"Generate {n} UK English search keywords for: {topic}. Mix head/mid/long-tail. One per line, no numbering."}],
-                  "temperature": 0.4},
-            timeout=25
-        )
-        if resp.status_code != 200: return []
-        text = (resp.json().get("choices", [{}])[0].get("message", {}) or {}).get("content", "") or ""
-        kws = [ln.strip("-• ").strip() for ln in text.splitlines() if ln.strip()]
-        seen, out = set(), []
-        for k in kws:
-            if k.lower() not in seen: seen.add(k.lower()); out.append(k)
-        return out[:n]
-    except: return []
+    if not _get_gemini_key() or not topic: return []
+    prompt = (
+        f"Generate {n} UK English search keywords for the topic: {topic}.\n"
+        "Mix head terms, mid-tail, and long-tail queries. Return one keyword per line, no numbering, no bullets."
+    )
+    raw = _gemini_generate(prompt)
+    if not raw: return []
+    kws = [ln.strip("-• ").strip() for ln in raw.splitlines() if ln.strip()]
+    seen, out = set(), []
+    for k in kws:
+        if k.lower() not in seen: seen.add(k.lower()); out.append(k)
+    return out[:n]
 
 # ─────────────────────────────────────────────
 # Scoring
@@ -673,7 +735,9 @@ def generate_recommendations(result: dict, competitor_results: List[dict] = None
     for s in (ai_f.get("schema_recommendations") or [])[:5]:
         nudge("Social/Schema","MEDIUM",f"Add {s} JSON-LD schema markup.")
     for s in (ai_f.get("aeo_opportunities") or [])[:5]:
-        nudge("AEO","HIGH",f"AEO opportunity: {s}")
+        # Only add if it's substantive (more than just "voice search for X")
+        if s and len(s) > 20:
+            nudge("AEO","HIGH",f"AEO: {s}")
 
     # Sort by priority then score (worst first)
     recs.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"],99), r["score"] or 0))
@@ -760,7 +824,7 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: str = None,
     # ── Social / schema ──
     og_present = bool(find_meta(soup, prop="og:title") or find_meta(soup, prop="og:description"))
     tw_present  = bool(find_meta(soup, name="twitter:title") or find_meta(soup, name="twitter:description"))
-    schema_jsonld = has_json_ld(soup)
+    schema_jsonld = has_json_ld(soup, html or "")
 
     # ── Content ──
     vis = visible_text(soup)
@@ -770,7 +834,7 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: str = None,
     hdgs = heading_audit(soup)
     anch = anchor_quality(soup, base)
     js   = js_reliance(soup, fetch_meta.get("page_bytes"))
-    aeo  = aeo_checks(soup, vis)
+    aeo  = aeo_checks(soup, vis, html or "")
 
     # ── Links / images ──
     a_tags = soup.find_all("a")
@@ -945,10 +1009,10 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; }
 .pill-medium { background:#422006; color:#fbbf24; border:1px solid #854d0e; border-radius:999px; padding:.15rem .6rem; font-size:.72rem; font-weight:700; }
 .pill-low    { background:#052e16; color:#4ade80; border:1px solid #166534; border-radius:999px; padding:.15rem .6rem; font-size:.72rem; font-weight:700; }
 
-.section-header { font-size:1rem; font-weight:700; color:#e2e8f0; margin: .8rem 0 .5rem 0; padding-bottom:.3rem; border-bottom:1px solid #1e293b; }
-.kv-row { display:flex; justify-content:space-between; padding:.2rem 0; border-bottom:1px solid #0f172a; }
+.section-header { font-size:1rem; font-weight:700; color:#1e293b; margin: .8rem 0 .5rem 0; padding-bottom:.3rem; border-bottom:1px solid rgba(0,0,0,0.12); }
+.kv-row { display:flex; justify-content:space-between; padding:.2rem 0; border-bottom:1px solid rgba(0,0,0,0.06); }
 .kv-row .k { color:#64748b; font-size:.82rem; }
-.kv-row .v { color:#e2e8f0; font-size:.82rem; font-weight:600; font-family:'JetBrains Mono',monospace; }
+.kv-row .v { color:#1e293b; font-size:.82rem; font-weight:600; font-family:'JetBrains Mono',monospace; }
 
 .comp-banner { background:#1e293b; border-radius:8px; padding:.6rem 1rem; margin:.4rem 0; font-size:.82rem; color:#94a3b8; }
 </style>
@@ -966,8 +1030,10 @@ with st.sidebar:
                                     height=100)
 
     st.markdown("---")
-    st.markdown("#### AI Analysis (OpenAI)")
-    use_ai   = st.checkbox("Enable AI content analysis", value=False)
+    st.markdown("#### AI Analysis (Gemini 2.5 Flash)")
+    gemini_ok = bool(_get_gemini_key())
+    st.caption("✅ Gemini key found" if gemini_ok else "❌ No key — set GEMINI_API_KEY")
+    use_ai   = st.checkbox("Enable Gemini AI analysis", value=False, disabled=not gemini_ok)
     topic_hint = st.text_input("Topic / intent hint", placeholder="e.g. buy running shoes UK",
                                 disabled=not use_ai)
     debug_ai = st.checkbox("Debug AI", value=False)
@@ -993,67 +1059,82 @@ with st.sidebar:
 st.markdown("# 🔍 SEO & AEO Audit Dashboard")
 st.caption("On-page · Technical · AEO · E-E-A-T · Content · Performance · Semrush · Competitor comparison")
 
-if not run_btn or not client_url:
+if not client_url:
     st.info("Enter your client URL in the sidebar (and competitor URLs to benchmark against), then click **Run Audit**.")
     st.stop()
 
-# ── Build target list ──
-targets = [normalize_url(client_url)]
-for line in (competitors_raw or "").splitlines():
-    line = line.strip()
-    if line: targets.append(normalize_url(line))
+# ── Run audit when button clicked — store in session_state ──
+if run_btn:
+    targets = [normalize_url(client_url)]
+    for line in (competitors_raw or "").splitlines():
+        line = line.strip()
+        if line: targets.append(normalize_url(line))
 
-is_client  = [True] + [False]*(len(targets)-1)
-label_list = ["🟢 Client"] + [f"🔵 Comp {i}" for i in range(1, len(targets))]
+    is_client_flags = [True] + [False]*(len(targets)-1)
+    label_list = ["🟢 Client"] + [f"🔵 Comp {i}" for i in range(1, len(targets))]
 
-# ── Run audits ──
-st.markdown(f"**Auditing {len(targets)} URL(s)...**")
-progress = st.progress(0.0)
-status_ph = st.empty()
-results: List[Dict[str, Any]] = []
+    st.markdown(f"**Auditing {len(targets)} URL(s)...**")
+    progress = st.progress(0.0)
+    status_ph = st.empty()
+    _results: List[Dict[str, Any]] = []
 
-for i, (url, is_cli, lbl) in enumerate(zip(targets, is_client, label_list), 1):
-    status_ph.write(f"⏳ {lbl}: {url}")
-    res = analyze_page(url, use_ai=use_ai, topic_hint=topic_hint,
-                       psi_strategy=psi_strategy, debug_ai=debug_ai, debug_psi=debug_psi)
-    res["_label"] = lbl; res["_is_client"] = is_cli
+    for i, (url, is_cli, lbl) in enumerate(zip(targets, is_client_flags, label_list), 1):
+        status_ph.write(f"⏳ {lbl}: {url}")
+        res = analyze_page(url, use_ai=use_ai, topic_hint=topic_hint,
+                           psi_strategy=psi_strategy, debug_ai=debug_ai, debug_psi=debug_psi)
+        res["_label"] = lbl; res["_is_client"] = is_cli
 
-    if use_semrush and sm_ok:
-        domain = res.get("_domain","")
-        final_url = res.get("_final_url") or url
-        res["semrush"] = {
-            "domain_organic": semrush_mom_yoy(domain, semrush_db),
-            "backlinks":      semrush_backlinks_overview(domain, "root_domain"),
-            "top_anchors":    semrush_top_anchors(domain, 10),
-            "url_keywords":   semrush_url_keywords(final_url, semrush_db, 50),
-            "domain_keywords": semrush_domain_keywords(domain, semrush_db, 20),
-        }
-        if topic_hint:
-            seeds = ai_keyword_seeds(topic_hint, 20)
-            if seeds:
-                from urllib.parse import quote
-                kw_str = ",".join(seeds[:20])
-                res["semrush"]["keyword_research"] = semrush_get(
-                    "phrase_all", {"phrase": kw_str, "database": semrush_db, "export_columns": "Ph,Nq,Kd"},
-                    base=SEMRUSH_DATA_BASE
-                )
+        if use_semrush and sm_ok:
+            _domain = res.get("_domain","")
+            final_url = res.get("_final_url") or url
+            res["semrush"] = {
+                "domain_organic":  semrush_mom_yoy(_domain, semrush_db),
+                "backlinks":       semrush_backlinks_overview(_domain, "root_domain"),
+                "top_anchors":     semrush_top_anchors(_domain, 10),
+                "url_keywords":    semrush_url_keywords(final_url, semrush_db, 50),
+                "domain_keywords": semrush_domain_keywords(_domain, semrush_db, 20),
+            }
+            if topic_hint:
+                seeds = ai_keyword_seeds(topic_hint, 20)
+                if seeds:
+                    kw_str = ",".join(seeds[:20])
+                    res["semrush"]["keyword_research"] = semrush_get(
+                        "phrase_all", {"phrase": kw_str, "database": semrush_db, "export_columns": "Ph,Nq,Kd"},
+                        base=SEMRUSH_DATA_BASE
+                    )
 
-    results.append(res)
-    progress.progress(i / len(targets))
+        _results.append(res)
+        progress.progress(i / len(targets))
 
-status_ph.empty()
-progress.empty()
+    status_ph.empty(); progress.empty()
 
+    _client = _results[0]
+    _comps  = _results[1:]
+    _client["_recommendations"] = generate_recommendations(_client, _comps)
+
+    # Persist to session state
+    st.session_state["audit_results"]  = _results
+    st.session_state["audit_topic"]    = topic_hint
+    st.session_state["audit_semrush"]  = use_semrush
+
+# ── Render from session state (survives widget reruns) ──
+if "audit_results" not in st.session_state:
+    st.stop()
+
+results = st.session_state["audit_results"]
 client = results[0]
 comps  = results[1:]
-comp_scores_map = comps  # for rec generation with context
-
-# Re-run recs for client with competitor context
-client["_recommendations"] = generate_recommendations(client, comp_scores_map)
 
 # ─────────────────────────────────────────────
 # DASHBOARD TABS
 # ─────────────────────────────────────────────
+col_hdr, col_clear = st.columns([5,1])
+with col_clear:
+    if st.button("🗑️ Clear & reset", use_container_width=True):
+        for k in ["audit_results","audit_topic","audit_semrush"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
 tabs = st.tabs(["📊 Overview", "🔎 Page Details", "⚡ AEO & Schema",
                 "📈 Semrush", "🏆 Recommendations", "📥 Export"])
 
@@ -1357,19 +1438,24 @@ with tabs[3]:
         for r in results:
             sm = r.get("semrush",{}) or {}
             dom_ov = sm.get("domain_organic") or {}
+            def _fmt(v): return "—" if v is None else v
             org_rows.append({
-                "Site": r.get("_label",""),
-                "Organic Keywords": dom_ov.get("Or","—"),
-                "Organic Traffic": dom_ov.get("Ot","—"),
-                "Domain Rank": dom_ov.get("Rk","—"),
-                "Traffic MoM %": dom_ov.get("Ot_mom_%","—"),
-                "Traffic YoY %": dom_ov.get("Ot_yoy_%","—"),
-                "Keywords MoM %": dom_ov.get("Or_mom_%","—"),
+                "Site":              r.get("_label",""),
+                "Organic Keywords":  _fmt(dom_ov.get("Or")),
+                "Organic Traffic":   _fmt(dom_ov.get("Ot")),
+                "Domain Rank":       _fmt(dom_ov.get("Rk")),
+                "Traffic MoM %":     _fmt(dom_ov.get("Ot_mom_%")),
+                "Traffic YoY %":     _fmt(dom_ov.get("Ot_yoy_%")),
+                "Keywords MoM %":    _fmt(dom_ov.get("Or_mom_%")),
             })
-        if any(r.get("Organic Keywords","—") != "—" for r in org_rows):
+        has_organic = any(
+            org_rows[i].get("Organic Keywords","—") != "—"
+            for i in range(len(org_rows))
+        )
+        if has_organic:
             st.dataframe(pd.DataFrame(org_rows), use_container_width=True, hide_index=True)
         else:
-            st.warning("No Semrush organic data returned — check API key and domain spelling.")
+            st.warning("No Semrush organic data returned for these domains. Check your API key, domain format (e.g. example.com not https://example.com), and that the SEMRUSH_API_KEY has the Analytics API enabled.")
 
         st.markdown("---")
         st.markdown("### Backlink Overview")
