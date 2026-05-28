@@ -1095,12 +1095,19 @@ with tabs[0]:
     radar_keys   = ["score_tech","score_performance","score_aeo","score_readability",
                     "score_social","score_headings","score_anchor","overall_score"]
     fig_radar = go.Figure()
-    colours = ["#22d3ee","#f472b6","#a78bfa","#fb923c","#4ade80","#fbbf24"]
-    for r, col in zip(results, colours):
+    colours = [
+        ("#22d3ee", "rgba(34,211,238,0.15)"),
+        ("#f472b6", "rgba(244,114,182,0.15)"),
+        ("#a78bfa", "rgba(167,139,250,0.15)"),
+        ("#fb923c", "rgba(251,146,60,0.15)"),
+        ("#4ade80", "rgba(74,222,128,0.15)"),
+        ("#fbbf24", "rgba(251,191,36,0.15)"),
+    ]
+    for r, (col, fill) in zip(results, colours):
         vals = [r.get(k) or 0 for k in radar_keys]
         fig_radar.add_trace(go.Scatterpolar(
             r=vals+[vals[0]], theta=radar_labels+[radar_labels[0]],
-            fill="toself", fillcolor=col+"33", line=dict(color=col, width=2),
+            fill="toself", fillcolor=fill, line=dict(color=col, width=2),
             name=r.get("_label","")
         ))
     fig_radar.update_layout(
@@ -1120,7 +1127,7 @@ with tabs[0]:
     score_df = pd.DataFrame(score_df_data).set_index("Metric")
     fig_bar = px.bar(score_df.reset_index().melt(id_vars="Metric", var_name="Site", value_name="Score"),
                      x="Metric", y="Score", color="Site", barmode="group",
-                     color_discrete_sequence=colours,
+                     color_discrete_sequence=[c[0] for c in colours],
                      template="plotly_dark")
     fig_bar.update_layout(paper_bgcolor="#0a0f1e", plot_bgcolor="#0a0f1e",
                            legend=dict(bgcolor="#0f172a"), height=300,
