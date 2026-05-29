@@ -171,9 +171,19 @@ def get_json_ld_types(soup: BeautifulSoup, raw_html: str = "") -> List[str]:
         if t not in seen: seen.add(t); result.append(t)
     return result
 
+def _root_url(url: str) -> str:
+    """Return just scheme + netloc — strips path, query, fragment."""
+    try:
+        from urllib.parse import urlparse
+        p = urlparse(normalize_url(url))
+        return f"{p.scheme}://{p.netloc}"
+    except Exception:
+        return normalize_url(url).rstrip("/")
+
 def get_robots_txt(url: str) -> Dict[str, Any]:
     meta = {"exists": False, "sitemaps": [], "disallow_count": 0, "error": None}
-    robots_url = normalize_url(url).rstrip("/") + "/robots.txt"
+    # Always fetch from root domain, not from the page path
+    robots_url = _root_url(url) + "/robots.txt"
     resp, err = http_get(robots_url)
     if err or not resp or resp.status_code >= 400:
         meta["error"] = err or f"HTTP {resp.status_code if resp else '?'}"; return meta
@@ -183,10 +193,19 @@ def get_robots_txt(url: str) -> Dict[str, Any]:
     return meta
 
 def has_sitemap(url: str, hinted: List[str]) -> bool:
-    base = normalize_url(url).rstrip("/")
-    for u in set(hinted) | {base + "/sitemap.xml"}:
+    # Always check from root domain, not from the page path
+    root = _root_url(url)
+    candidates = set(hinted) | {root + "/sitemap.xml", root + "/sitemap_index.xml",
+                                  root + "/sitemap-index.xml", root + "/sitemaps/sitemap.xml"}
+    for u in candidates:
+        if not u.strip(): continue
         resp, _ = http_get(u)
-        if resp and resp.status_code < 400 and resp.content and b"<urlset" in resp.content[:4096]:
+        if not resp or resp.status_code >= 400 or not resp.content:
+            continue
+        snippet = resp.content[:8192]
+        # Valid sitemap: urlset (standard), sitemapindex (index file), or <?xml with sitemap markers
+        if (b"<urlset" in snippet or b"<sitemapindex" in snippet or
+                (b"<?xml" in snippet and b"sitemap" in snippet.lower())):
             return True
     return False
 
