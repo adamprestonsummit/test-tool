@@ -395,6 +395,11 @@ def semrush_keyword_positions(keywords: List[str], domains: List[str],
     key = _get_semrush_key()
     if not key: return None
 
+    # Pre-clean domain list: strip protocol/path for matching
+    clean_domains = {}
+    for dom in domains:
+        clean_domains[dom] = dom.lower().replace("https://","").replace("http://","").split("/")[0].strip()
+
     rows_out = []
     for kw in keywords[:30]:  # cap at 30 to avoid hammering API
         params = {
@@ -403,14 +408,18 @@ def semrush_keyword_positions(keywords: List[str], domains: List[str],
             "phrase": kw,
             "database": database,
             "display_limit": 20,
-            "export_columns": "Dn,Po,Ur,Nq"
+            "export_columns": "Dn,Po,Nq"
         }
         try:
             r = requests.get(SEMRUSH_DATA_BASE, params=params, timeout=20)
             if r.status_code != 200 or not r.text or "ERROR" in r.text[:30].upper():
                 continue
             serp_rows = list(csv.DictReader(io.StringIO(r.text), delimiter=";"))
-            row = {"Keyword": kw}
+            # Pre-fill ALL domain columns with ">20" so no column is ever missing
+            row: Dict[str, Any] = {"Keyword": kw}
+            for dom in domains:
+                row[dom] = ">20"
+
             for sr in serp_rows:
                 dn = (sr.get("Domain") or sr.get("Dn") or "").strip().lower()
                 po = sr.get("Position") or sr.get("Po")
@@ -418,22 +427,22 @@ def semrush_keyword_positions(keywords: List[str], domains: List[str],
                 if not row.get("Search Volume") and nq:
                     try: row["Search Volume"] = int(float(nq))
                     except: pass
-                for dom in domains:
-                    clean = dom.lower().replace("https://","").replace("http://","").split("/")[0].strip()
-                    if clean in dn or dn in clean:
-                        try: row[dom] = int(float(po))
+                for dom, clean in clean_domains.items():
+                    if clean in dn or dn == clean:
+                        try:
+                            row[dom] = int(float(po))  # always int, never float
                         except: pass
+
             rows_out.append(row)
         except Exception:
             continue
 
     if not rows_out: return None
+    # Column order: Keyword, Search Volume, then domains
+    col_order = ["Keyword", "Search Volume"] + domains
     df = pd.DataFrame(rows_out)
-    # Fill missing positions with ">20" to indicate not in top 20
-    for dom in domains:
-        if dom in df.columns:
-            df[dom] = df[dom].fillna(">20")
-    return df
+    existing_cols = [c for c in col_order if c in df.columns]
+    return df[existing_cols]
 
 def semrush_mom_yoy(domain: str, database: str = "uk") -> Optional[dict]:
     anchor = last_full_month()
@@ -793,6 +802,103 @@ def generate_recommendations(result: dict, competitor_results: List[dict] = None
     # Sort by priority then score (worst first)
     recs.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"],99), r["score"] or 0))
     return recs
+
+def generate_keyword_gap_insights(kw_rankings_df, client_domain: str,
+                                   comp_domains: List[str]) -> List[dict]:
+    """
+    Analyses keyword ranking gaps between client and competitors.
+    Returns a list of actionable insights per keyword cluster:
+    - keywords the client doesn't rank for (competitors do)
+    - keywords where the client ranks far below competitors
+    - quick-win keywords where client is close (pos 11-20)
+    """
+    if kw_rankings_df is None or kw_rankings_df.empty: return []
+    insights = []
+
+    def _pos(v):
+        try: return int(str(v))
+        except: return 99  # ">20" or missing = 99
+
+    for _, row in kw_rankings_df.iterrows():
+        kw = row.get("Keyword","")
+        sv = row.get("Search Volume")
+        client_pos = _pos(row.get(client_domain, ">20"))
+        comp_positions = {dom: _pos(row.get(dom, ">20")) for dom in comp_domains if dom in row}
+        best_comp_pos = min(comp_positions.values()) if comp_positions else 99
+        best_comp_dom = min(comp_positions, key=comp_positions.get) if comp_positions else ""
+
+        sv_label = f"{sv:,}" if isinstance(sv, int) else "?"
+
+        if client_pos <= 3:
+            continue  # already top 3, skip
+
+        if client_pos == 99 and best_comp_pos <= 10:
+            # Client not ranking; competitor in top 10
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": "Not ranked",
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Missing ranking",
+                "priority": "HIGH" if best_comp_pos <= 3 else "MEDIUM",
+                "action": (
+                    f"Create or significantly improve content targeting '{kw}'. "
+                    f"{best_comp_dom} ranks #{best_comp_pos}. "
+                    "Ensure the page directly answers user intent, includes the term in H1/title/meta, "
+                    "and has supporting FAQ or structured content."
+                )
+            })
+        elif client_pos == 99 and best_comp_pos <= 20:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": "Not ranked",
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Missing ranking",
+                "priority": "MEDIUM",
+                "action": (
+                    f"Target '{kw}' with a dedicated page section or supporting content. "
+                    f"{best_comp_dom} ranks #{best_comp_pos}."
+                )
+            })
+        elif 11 <= client_pos <= 20:
+            gap = client_pos - best_comp_pos if best_comp_pos < client_pos else 0
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": client_pos,
+                "best_comp_position": best_comp_pos if best_comp_pos < 99 else ">20",
+                "best_comp_domain": best_comp_dom,
+                "type": "Quick win (page 2)",
+                "priority": "HIGH",
+                "action": (
+                    f"Currently ranking #{client_pos} — page 2. "
+                    "Quick wins: strengthen internal links to this page, "
+                    "improve title tag to include '{kw}' closer to the start, "
+                    "add the term to the H1 or first H2, expand content depth. "
+                    "A small improvement could move this to page 1."
+                )
+            })
+        elif 4 <= client_pos <= 10 and best_comp_pos < client_pos:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": client_pos,
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Ranking gap (top 10)",
+                "priority": "MEDIUM",
+                "action": (
+                    f"Ranking #{client_pos}, {best_comp_dom} ranks #{best_comp_pos}. "
+                    "Review their page: check content depth, schema, internal links and "
+                    "anchor text pointing to the ranking page. Match or exceed."
+                )
+            })
+
+    # Sort: quick wins first (already close), then missing rankings by comp position
+    priority_order = {"HIGH": 0, "MEDIUM": 1}
+    type_order = {"Quick win (page 2)": 0, "Missing ranking": 1, "Ranking gap (top 10)": 2}
+    insights.sort(key=lambda x: (priority_order.get(x["priority"],9), type_order.get(x["type"],9)))
+    return insights
+
 
 def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
     """
@@ -1212,6 +1318,41 @@ def build_recommendations_docx(results: List[dict], client_url: str = "") -> byt
             gap_run.font.color.rgb = RGBColor(0x99,0x1b,0x1b); gap_run.bold = True
             row[4].paragraphs[0].add_run(f"{ins['what_they_do']} → {ins['action']}")
         doc.add_paragraph()
+
+    # ── Keyword ranking gaps ──
+    # We pass kw_rankings_df via a module-level variable if available
+    _kw_df = globals().get("kw_rankings_df")
+    if _kw_df is not None and not _kw_df.empty and comps_res:
+        _heading("Keyword Ranking Gap Analysis", 2)
+        doc.add_paragraph(
+            "The following keywords represent opportunities where the client is outranked or absent "
+            "from the top 20 results while competitors rank strongly."
+        )
+        _cli_dom  = client_res.get("_domain","")
+        _comp_doms = [c.get("_domain","") for c in comps_res if c.get("_domain")]
+        kw_gaps = generate_keyword_gap_insights(_kw_df, _cli_dom, _comp_doms)
+        if kw_gaps:
+            kt = doc.add_table(rows=1, cols=5)
+            kt.style = "Table Grid"
+            for i, hdr_txt in enumerate(["Keyword","Vol","Type","Client pos","Action"]):
+                c = kt.rows[0].cells[i]
+                _set_cell_bg(c, "1e293b")
+                run = c.paragraphs[0].add_run(hdr_txt)
+                run.bold = True; run.font.color.rgb = RGBColor(0xff,0xff,0xff)
+            kt.columns[0].width = Inches(1.5)
+            kt.columns[1].width = Inches(0.6)
+            kt.columns[2].width = Inches(1.2)
+            kt.columns[3].width = Inches(0.8)
+            kt.columns[4].width = Inches(2.5)
+            for g in kw_gaps[:20]:
+                row = kt.add_row().cells
+                row[0].paragraphs[0].add_run(g["keyword"])
+                row[1].paragraphs[0].add_run(str(g.get("search_volume","?")))
+                row[2].paragraphs[0].add_run(g["type"])
+                cp = row[3].paragraphs[0].add_run(str(g["client_position"]))
+                if g["priority"] == "HIGH": cp.font.color.rgb = RGBColor(0x99,0x1b,0x1b)
+                row[4].paragraphs[0].add_run(g["action"][:200])
+            doc.add_paragraph()
 
     # ── Competitor issue summary (their weaknesses = your opportunity) ──
     if comps_res:
@@ -1997,6 +2138,81 @@ with tabs[4]:
                          use_container_width=True, hide_index=True)
         else:
             st.success("✅ Client page is competitive across all measured dimensions.")
+
+    # ── Keyword ranking gap analysis ──
+    if kw_rankings_df is not None and not kw_rankings_df.empty and comps:
+        st.markdown("---")
+        st.markdown("### 🔑 Keyword Ranking Gap Analysis")
+        st.caption(
+            "Where the client is missing rankings or significantly outranked by competitors. "
+            "Based on Semrush SERP data for topic-related keywords."
+        )
+        client_domain  = client.get("_domain","")
+        comp_domains   = [c.get("_domain","") for c in comps if c.get("_domain")]
+        kw_insights    = generate_keyword_gap_insights(kw_rankings_df, client_domain, comp_domains)
+
+        if kw_insights:
+            # Summary counts
+            quick_wins    = sum(1 for i in kw_insights if i["type"] == "Quick win (page 2)")
+            missing       = sum(1 for i in kw_insights if i["type"] == "Missing ranking")
+            gaps          = sum(1 for i in kw_insights if i["type"] == "Ranking gap (top 10)")
+            sc1, sc2, sc3 = st.columns(3)
+            sc1.metric("🚀 Quick wins (pg 2→1)", quick_wins)
+            sc2.metric("❌ Missing rankings", missing)
+            sc3.metric("📉 Ranking gaps (top 10)", gaps)
+            st.markdown("")
+
+            # Type filter
+            type_filter = st.selectbox(
+                "Show",
+                ["All", "Quick win (page 2)", "Missing ranking", "Ranking gap (top 10)"],
+                key="kw_gap_type_filter"
+            )
+            filtered_kw = kw_insights if type_filter == "All" else [
+                i for i in kw_insights if i["type"] == type_filter
+            ]
+
+            for ins in filtered_kw:
+                pri_cls = "pill-high" if ins["priority"] == "HIGH" else "pill-medium"
+                type_badge_colour = {
+                    "Quick win (page 2)":   "#052e16",
+                    "Missing ranking":      "#450a0a",
+                    "Ranking gap (top 10)": "#422006",
+                }.get(ins["type"], "#1e293b")
+                type_text_colour = {
+                    "Quick win (page 2)":   "#4ade80",
+                    "Missing ranking":      "#f87171",
+                    "Ranking gap (top 10)": "#fbbf24",
+                }.get(ins["type"], "#94a3b8")
+                client_pos_str = str(ins["client_position"])
+                comp_pos_str   = str(ins["best_comp_position"])
+                sv_str         = str(ins.get("search_volume","?"))
+                st.markdown(f"""
+                <div class="rec-card">
+                  <div class="rec-cat">
+                    Keyword Rankings &nbsp;
+                    <span class="{pri_cls}">{ins["priority"]}</span> &nbsp;
+                    <span style="background:{type_badge_colour};color:{type_text_colour};
+                           border-radius:999px;padding:.15rem .55rem;font-size:.7rem;font-weight:700;">
+                      {ins["type"]}
+                    </span>
+                  </div>
+                  <div class="rec-msg" style="font-weight:600;font-size:.95rem;margin-bottom:.3rem;">
+                    {ins["keyword"]}
+                    <span style="color:#64748b;font-size:.8rem;font-weight:400;">
+                      &nbsp;· {sv_str} searches/mo
+                    </span>
+                  </div>
+                  <div class="rec-score">
+                    Client: <b>{client_pos_str}</b> &nbsp;|&nbsp;
+                    {ins.get("best_comp_domain","Competitor")}: <b>{comp_pos_str}</b>
+                  </div>
+                  <div class="rec-msg" style="margin-top:.4rem;font-size:.83rem;color:#94a3b8;">
+                    {ins["action"]}
+                  </div>
+                </div>""", unsafe_allow_html=True)
+        else:
+            st.success("✅ No significant keyword ranking gaps detected versus competitors.")
 
     # ── Competitor weakness summary ──
     if comps:
