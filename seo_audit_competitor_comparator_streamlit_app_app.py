@@ -1032,6 +1032,80 @@ def generate_keyword_gap_insights(kw_rankings_df, client_domain: str,
     insights.sort(key=lambda x: (priority_order.get(x["priority"],9), type_order.get(x["type"],9)))
     return insights
 
+def generate_ai_keyword_actions(
+    gap_insights: List[dict],
+    client: dict,
+    comps: List[dict],
+    debug: bool = False
+) -> List[dict]:
+    """
+    Takes the keyword gap list and enriches each item with a Gemini-generated
+    specific action that references the real client page signals.
+    Returns the same list with action fields replaced.
+    """
+    if not gap_insights or not _get_gemini_key():
+        return gap_insights
+
+    client_brief = _build_page_brief(client)
+    comp_briefs  = ("\n---\n".join(
+        f"COMPETITOR {i+1}:\n{_build_page_brief(c)}" for i, c in enumerate(comps)
+    )) if comps else "No competitor data."
+
+    # Build a compact keyword list for the prompt
+    kw_lines = []
+    for i, g in enumerate(gap_insights):
+        kw_lines.append(
+            f'{i}: keyword="{g["keyword"]}" search_vol={g["search_volume"]} '
+            f'type="{g["type"]}" client_pos={g["client_position"]} '
+            f'best_comp={g["best_comp_domain"]} comp_pos={g["best_comp_position"]}'
+        )
+
+    prompt = (
+        "You are a senior SEO consultant. For each keyword gap below, write a single "
+        "SPECIFIC, ACTIONABLE recommendation that references the actual client page data.\n\n"
+        "RULES:\n"
+        "- For QUICK WINS (page 2): reference the exact current title/H1 and say what specific "
+        "word change would help. E.g. 'Your current title is X — add the keyword Y near the start'.\n"
+        "- For MISSING RANKINGS: explain what content is absent from the client page that "
+        "the competitor has, based on their schema/headings. Be specific.\n"
+        "- For RANKING GAPS: compare client and competitor signals directly — name what "
+        "the competitor does that the client doesn't (schema type, heading, FAQ etc.).\n"
+        "- Maximum 2 sentences per recommendation. British English.\n"
+        "- Return ONLY a JSON array of objects: "
+        '[{"index": 0, "action": "...", "why": "..."}, ...]\n'
+        "- index must match the input list index exactly.\n\n"
+        f"CLIENT PAGE:\n{client_brief}\n\n"
+        f"COMPETITORS:\n{comp_briefs}\n\n"
+        "KEYWORD GAPS:\n" + "\n".join(kw_lines) + "\n\n"
+        "Return ONLY the JSON array."
+    )
+
+    raw = _gemini_generate(prompt, debug=debug)
+    if not raw:
+        return gap_insights
+
+    try:
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        s = raw.find("["); e = raw.rfind("]")
+        if s != -1 and e > s: raw = raw[s:e+1]
+        updates = json.loads(raw)
+        if not isinstance(updates, list): return gap_insights
+
+        idx_map = {int(u["index"]): u for u in updates if isinstance(u, dict) and "index" in u}
+        enriched = []
+        for i, g in enumerate(gap_insights):
+            g = dict(g)  # copy
+            if i in idx_map:
+                u = idx_map[i]
+                if u.get("action"): g["action"] = u["action"]
+                if u.get("why"):    g["why"]    = u["why"]
+            enriched.append(g)
+        return enriched
+    except Exception as e:
+        if debug: st.warning(f"AI keyword actions parse error: {e}")
+        return gap_insights
+
+
 def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
     """
     Compare client vs competitors across all scored dimensions.
@@ -1744,7 +1818,9 @@ if run_btn:
             _kw_rankings_df = semrush_keyword_positions(_seeds[:20], _all_domains, semrush_db)
 
     # Gemini-powered AI recommendations (runs after all data collected)
-    _ai_recs = None
+    _ai_recs      = None
+    _ai_kw_gaps   = None
+
     if gemini_ok:
         with st.spinner("🤖 Generating AI-powered recommendations with Gemini..."):
             _ai_recs = generate_ai_recommendations(
@@ -1756,11 +1832,23 @@ if run_btn:
         if _ai_recs:
             _client["_ai_recommendations"] = _ai_recs
 
+        # AI-enriched keyword gap actions (separate call, uses same page briefs)
+        if _kw_rankings_df is not None:
+            _cli_dom   = _client.get("_domain","")
+            _comp_doms = [r.get("_domain","") for r in _comps if r.get("_domain")]
+            _raw_gaps  = generate_keyword_gap_insights(_kw_rankings_df, _cli_dom, _comp_doms)
+            if _raw_gaps:
+                with st.spinner("🤖 Generating AI-powered keyword recommendations..."):
+                    _ai_kw_gaps = generate_ai_keyword_actions(
+                        _raw_gaps, _client, _comps, debug=debug_ai
+                    )
+
     # Persist to session state
     st.session_state["audit_results"]    = _results
     st.session_state["audit_topic"]      = topic_hint
     st.session_state["audit_semrush"]    = use_semrush
     st.session_state["kw_rankings_df"]   = _kw_rankings_df
+    st.session_state["ai_kw_gaps"]       = _ai_kw_gaps
 
 # ── Render from session state (survives widget reruns) ──
 if "audit_results" not in st.session_state:
@@ -1770,6 +1858,7 @@ results        = st.session_state["audit_results"]
 client         = results[0]
 comps          = results[1:]
 kw_rankings_df = st.session_state.get("kw_rankings_df")
+ai_kw_gaps     = st.session_state.get("ai_kw_gaps")
 _stored_topic  = st.session_state.get("audit_topic","")
 
 # ─────────────────────────────────────────────
@@ -1778,7 +1867,7 @@ _stored_topic  = st.session_state.get("audit_topic","")
 col_hdr, col_clear = st.columns([5,1])
 with col_clear:
     if st.button("🗑️ Clear & reset", use_container_width=True):
-        for k in ["audit_results","audit_topic","audit_semrush","kw_rankings_df"]:
+        for k in ["audit_results","audit_topic","audit_semrush","kw_rankings_df","ai_kw_gaps"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -2331,13 +2420,17 @@ with tabs[4]:
     if kw_rankings_df is not None and not kw_rankings_df.empty and comps:
         st.markdown("---")
         st.markdown("### 🔑 Keyword Ranking Gap Analysis")
+        ai_kw_label = " · AI-powered" if ai_kw_gaps else ""
         st.caption(
-            "Where the client is missing rankings or significantly outranked by competitors. "
-            "Based on Semrush SERP data for topic-related keywords."
+            f"Where the client is missing rankings or significantly outranked by competitors. "
+            f"Based on Semrush SERP data for topic-related keywords.{ai_kw_label}"
         )
         client_domain  = client.get("_domain","")
         comp_domains   = [c.get("_domain","") for c in comps if c.get("_domain")]
-        kw_insights    = generate_keyword_gap_insights(kw_rankings_df, client_domain, comp_domains)
+        # Use AI-enriched gaps if available, else compute rule-based
+        kw_insights    = ai_kw_gaps if ai_kw_gaps else generate_keyword_gap_insights(
+            kw_rankings_df, client_domain, comp_domains
+        )
 
         if kw_insights:
             # Summary counts
@@ -2375,6 +2468,10 @@ with tabs[4]:
                 client_pos_str = str(ins["client_position"])
                 comp_pos_str   = str(ins["best_comp_position"])
                 sv_str         = str(ins.get("search_volume","?"))
+                why_html = ""
+                if ins.get("why"):
+                    why_html = (f'<div style="margin-top:.3rem;font-size:.8rem;color:#64748b;">'
+                                f'<b>Why:</b> {ins["why"]}</div>')
                 st.markdown(f"""
                 <div class="rec-card">
                   <div class="rec-cat">
@@ -2395,9 +2492,10 @@ with tabs[4]:
                     Client: <b>{client_pos_str}</b> &nbsp;|&nbsp;
                     {ins.get("best_comp_domain","Competitor")}: <b>{comp_pos_str}</b>
                   </div>
-                  <div class="rec-msg" style="margin-top:.4rem;font-size:.83rem;color:#94a3b8;">
+                  <div class="rec-msg" style="margin-top:.4rem;font-size:.83rem;color:#e2e8f0;">
                     {ins["action"]}
                   </div>
+                  {why_html}
                 </div>""", unsafe_allow_html=True)
         else:
             st.success("✅ No significant keyword ranking gaps detected versus competitors.")
