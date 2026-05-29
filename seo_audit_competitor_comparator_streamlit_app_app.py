@@ -423,9 +423,11 @@ def semrush_keyword_positions(keywords: List[str], domains: List[str],
             for sr in serp_rows:
                 dn = (sr.get("Domain") or sr.get("Dn") or "").strip().lower()
                 po = sr.get("Position") or sr.get("Po")
-                nq = sr.get("Search Volume") or sr.get("Nq")
+                # Semrush returns "Search Volume" or "Nq" depending on endpoint
+                nq = (sr.get("Search Volume") or sr.get("Nq") or
+                      sr.get("search_volume") or sr.get("nq") or "")
                 if not row.get("Search Volume") and nq:
-                    try: row["Search Volume"] = int(float(nq))
+                    try: row["Search Volume"] = int(float(str(nq).strip()))
                     except: pass
                 for dom, clean in clean_domains.items():
                     if clean in dn or dn == clean:
@@ -733,7 +735,8 @@ def _build_page_brief(r: dict) -> str:
         f"Title ({r.get('title_len',0)} chars): {r.get('title','')}",
         f"Meta description ({r.get('meta_desc_len',0)} chars): {r.get('meta_desc','')}",
         f"H1 ({r.get('h1_count',0)}): {'; '.join(r.get('h1_texts',[])[:3])}",
-        f"H2 count: {hdgs.get('h2_count',0)}, heading level skips: {hdgs.get('level_skips',0)}",
+        f"H2 count: {hdgs.get('h2_count',0)}, level skips: {hdgs.get('level_skips',0)}",
+        f"All headings: {'; '.join(h['text'] for h in (hdgs.get('all_headings') or [])[:20] if h.get('text'))}",
         f"Schema types present: {', '.join(aeo.get('schema_types',[])) or 'NONE'}",
         f"FAQPage schema: {aeo.get('faq_schema')}, HowTo schema: {aeo.get('howto_schema')}",
         f"BreadcrumbList: {aeo.get('breadcrumb_schema')}, Article schema: {aeo.get('article_schema')}",
@@ -765,6 +768,11 @@ def _build_page_brief(r: dict) -> str:
     if cwv.get("LCP_ms"):
         lines.append(f"Core Web Vitals — LCP: {round(cwv['LCP_ms'])}ms, "
                      f"CLS: {cwv.get('CLS','?')}, INP: {cwv.get('INP_ms','?')}ms")
+
+    # Body text sample — helps Gemini know what content actually exists on the page
+    body_sample = (r.get("_body_sample") or "")
+    if body_sample:
+        lines.append(f"Body text sample (first 800 chars): {body_sample[:800]}")
 
     scores = {k: r.get(k) for k in [
         "overall_score","score_tech","score_performance","score_aeo",
@@ -1061,23 +1069,32 @@ def generate_ai_keyword_actions(
         )
 
     prompt = (
-        "You are a senior SEO consultant. For each keyword gap below, write a single "
-        "SPECIFIC, ACTIONABLE recommendation that references the actual client page data.\n\n"
-        "RULES:\n"
-        "- For QUICK WINS (page 2): reference the exact current title/H1 and say what specific "
-        "word change would help. E.g. 'Your current title is X — add the keyword Y near the start'.\n"
-        "- For MISSING RANKINGS: explain what content is absent from the client page that "
-        "the competitor has, based on their schema/headings. Be specific.\n"
-        "- For RANKING GAPS: compare client and competitor signals directly — name what "
-        "the competitor does that the client doesn't (schema type, heading, FAQ etc.).\n"
-        "- Maximum 2 sentences per recommendation. British English.\n"
-        "- Return ONLY a JSON array of objects: "
+        "You are a senior SEO consultant analysing specific keyword ranking gaps.\n"
+        "For EACH keyword gap, produce one action and one why. "
+        "Every sentence must quote real data from the page briefs below.\n\n"
+        "STRICT RULES — if you break these, the output is useless:\n"
+        "1. QUICK WIN gaps: Quote the client's exact current <title> tag, then give the "
+        "exact rewritten title that includes the keyword. E.g. action: 'Change your current "
+        "title \'Discover Your New Kitchen Today | Wickes\' to \'Fitted Kitchens UK | "
+        "New Kitchen Design & Install | Wickes\' to directly target this keyword.'\n"
+        "2. MISSING RANKING gaps: Name a specific H2 heading or schema type that the "
+        "competitor has but the client doesn't. Quote it if possible. E.g. 'Magnet's "
+        "page includes an H2 \'Shaker Kitchen Collections\' and a HowTo schema block — "
+        "add an equivalent section titled \'Our Shaker Kitchen Range\' with step-by-step "
+        "planning content.'\n"
+        "3. RANKING GAP (top 10): Quote both pages' actual signals. E.g. 'Magnet ranks "
+        "#3 with BreadcrumbList schema and 12 H2s; your page has no breadcrumb schema "
+        "and 4 H2s — add BreadcrumbList JSON-LD and expand H2 coverage to match.'\n"
+        "4. 'why' field: cite the specific data point that explains the gap. "
+        "Never write generic reasons like \'competitors likely have this content\'.\n"
+        "5. Max 2 sentences each for action and why. British English.\n"
+        "6. Return ONLY valid JSON array: "
         '[{"index": 0, "action": "...", "why": "..."}, ...]\n'
-        "- index must match the input list index exactly.\n\n"
-        f"CLIENT PAGE:\n{client_brief}\n\n"
-        f"COMPETITORS:\n{comp_briefs}\n\n"
-        "KEYWORD GAPS:\n" + "\n".join(kw_lines) + "\n\n"
-        "Return ONLY the JSON array."
+        "7. index must match the input number exactly. No extra keys.\n\n"
+        f"CLIENT PAGE DATA:\n{client_brief}\n\n"
+        f"COMPETITOR PAGE DATA:\n{comp_briefs}\n\n"
+        "KEYWORD GAPS TO ACTION:\n" + "\n".join(kw_lines) + "\n\n"
+        "Remember: quote real values from the data above. Return ONLY the JSON array."
     )
 
     raw = _gemini_generate(prompt, debug=debug)
@@ -1322,11 +1339,15 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: str = None,
     psi_scores, cwv, psi_status = fetch_psi(result.get("_final_url") or url, psi_strategy, debug_psi)
     if debug_psi: st.write({"PSI_STATUS": psi_status})
 
+    # Store body text sample and top headings for AI brief
+    body_sample = vis[:1200] if vis else ""
+
     result.update({
         "title": title, "title_len": len(title),
         "meta_desc": meta_desc, "meta_desc_len": len(meta_desc),
         "canonical": canonical,
         "h1_count": len(h1s), "h1_texts": h1s,
+        "_body_sample": body_sample,
         "og_present": og_present, "twitter_present": tw_present,
         "schema_jsonld": schema_jsonld,
         "internal_links": int_links, "external_links": ext_links,
