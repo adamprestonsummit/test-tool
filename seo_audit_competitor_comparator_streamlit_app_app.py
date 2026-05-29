@@ -384,6 +384,57 @@ def semrush_domain_keywords(domain: str, database: str = "uk", limit: int = 20) 
                         "display_limit": limit, "export_columns": "Ph,Po,Nq,Kd,Tr,Ur"},
                        base=SEMRUSH_DATA_BASE)
 
+def semrush_keyword_positions(keywords: List[str], domains: List[str],
+                               database: str = "uk") -> Optional[pd.DataFrame]:
+    """
+    For a list of keywords, fetch the SERP positions for each domain.
+    Returns a DataFrame: keyword × domain → position (or None).
+    Uses phrase_organic to get positions per keyword, then filters by domain.
+    """
+    if not keywords or not domains: return None
+    key = _get_semrush_key()
+    if not key: return None
+
+    rows_out = []
+    for kw in keywords[:30]:  # cap at 30 to avoid hammering API
+        params = {
+            "type": "phrase_organic",
+            "key": key,
+            "phrase": kw,
+            "database": database,
+            "display_limit": 20,
+            "export_columns": "Dn,Po,Ur,Nq"
+        }
+        try:
+            r = requests.get(SEMRUSH_DATA_BASE, params=params, timeout=20)
+            if r.status_code != 200 or not r.text or "ERROR" in r.text[:30].upper():
+                continue
+            serp_rows = list(csv.DictReader(io.StringIO(r.text), delimiter=";"))
+            row = {"Keyword": kw}
+            for sr in serp_rows:
+                dn = (sr.get("Domain") or sr.get("Dn") or "").strip().lower()
+                po = sr.get("Position") or sr.get("Po")
+                nq = sr.get("Search Volume") or sr.get("Nq")
+                if not row.get("Search Volume") and nq:
+                    try: row["Search Volume"] = int(float(nq))
+                    except: pass
+                for dom in domains:
+                    clean = dom.lower().replace("https://","").replace("http://","").split("/")[0].strip()
+                    if clean in dn or dn in clean:
+                        try: row[dom] = int(float(po))
+                        except: pass
+            rows_out.append(row)
+        except Exception:
+            continue
+
+    if not rows_out: return None
+    df = pd.DataFrame(rows_out)
+    # Fill missing positions with ">20" to indicate not in top 20
+    for dom in domains:
+        if dom in df.columns:
+            df[dom] = df[dom].fillna(">20")
+    return df
+
 def semrush_mom_yoy(domain: str, database: str = "uk") -> Optional[dict]:
     anchor = last_full_month()
     this_m  = anchor.strftime("%Y-%m-15")
@@ -743,6 +794,109 @@ def generate_recommendations(result: dict, competitor_results: List[dict] = None
     recs.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"],99), r["score"] or 0))
     return recs
 
+def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
+    """
+    Compare client vs competitors across all scored dimensions.
+    Returns a list of insights where competitors are measurably better,
+    with actionable advice on what to adopt.
+    """
+    if not comps: return []
+    insights = []
+
+    DIMENSION_LABELS = {
+        "score_tech":        "Technical foundations",
+        "score_performance": "Page performance / speed",
+        "score_aeo":         "AEO / structured data",
+        "score_social":      "Social & schema markup",
+        "score_readability": "Content readability",
+        "score_headings":    "Heading structure",
+        "score_anchor":      "Internal link anchor quality",
+        "score_title":       "Title tag optimisation",
+        "score_meta_desc":   "Meta description",
+        "score_h1":          "H1 usage",
+        "score_img_alt":     "Image alt text",
+        "score_originality": "Content originality",
+        "score_js":          "JavaScript dependency",
+    }
+
+    WHAT_TO_DO = {
+        "score_tech":        "Audit HTTPS, robots.txt, sitemap, viewport and redirect chains.",
+        "score_performance": "Check Core Web Vitals; compress images; defer non-critical scripts.",
+        "score_aeo":         "Add FAQPage/HowTo/BreadcrumbList schema; structure Q&A content.",
+        "score_social":      "Implement full Open Graph + Twitter Card meta; add JSON-LD.",
+        "score_readability": "Shorten sentences; use plain language; target Flesch 50–70.",
+        "score_headings":    "Ensure one H1; use sequential H2/H3 sections; avoid empty headings.",
+        "score_anchor":      "Replace 'click here' anchors with descriptive keyword-rich text.",
+        "score_title":       "Rewrite title to 35–65 chars with primary keyword near the start.",
+        "score_meta_desc":   "Write a 70–160 char meta description with a CTA and target keyword.",
+        "score_h1":          "Use exactly one descriptive H1 matching the page's primary intent.",
+        "score_img_alt":     "Add descriptive alt text to all meaningful images.",
+        "score_originality": "Add unique data, case studies or proprietary insights.",
+        "score_js":          "Reduce script count; defer non-critical JS; ensure SSR for core content.",
+    }
+
+    for key, label in DIMENSION_LABELS.items():
+        client_val = client.get(key)
+        if client_val is None: continue
+        comp_vals = [c.get(key) for c in comps if c.get(key) is not None]
+        if not comp_vals: continue
+        best_comp = max(comp_vals)
+        avg_comp  = round(sum(comp_vals) / len(comp_vals))
+        gap = best_comp - client_val
+
+        if gap < 10: continue  # not a meaningful gap
+
+        # Which competitor is best?
+        best_comp_result = max(comps, key=lambda c: c.get(key) or 0)
+        best_label = best_comp_result.get("_label","Competitor")
+        best_domain = best_comp_result.get("_domain","")
+
+        # What are the concrete signals on the best competitor's page?
+        signals = []
+        best_aeo = best_comp_result.get("aeo",{}) or {}
+        if key == "score_aeo":
+            if best_aeo.get("faq_schema"):     signals.append("FAQPage schema present")
+            if best_aeo.get("breadcrumb_schema"): signals.append("BreadcrumbList schema")
+            if best_aeo.get("article_schema"): signals.append("Article/BlogPosting schema")
+            if best_aeo.get("howto_schema"):   signals.append("HowTo schema")
+            if best_aeo.get("faq_headings"):   signals.append("FAQ-style headings")
+            if best_aeo.get("has_lists"):      signals.append("Structured list content")
+        elif key == "score_tech":
+            if best_comp_result.get("robots_exists"):  signals.append("robots.txt present")
+            if best_comp_result.get("sitemap_exists"): signals.append("sitemap.xml present")
+            if best_comp_result.get("canonical"):      signals.append("Canonical tag set")
+        elif key == "score_social":
+            if best_comp_result.get("og_present"):      signals.append("Open Graph tags")
+            if best_comp_result.get("twitter_present"): signals.append("Twitter Card tags")
+            if best_comp_result.get("schema_jsonld"):   signals.append("JSON-LD structured data")
+        elif key == "score_headings":
+            hdgs = best_comp_result.get("headings",{}) or {}
+            if hdgs.get("h2_count",0) > 3: signals.append(f"{hdgs.get('h2_count')} H2 sections")
+            if hdgs.get("level_skips",0) == 0: signals.append("Clean heading hierarchy")
+        elif key == "score_performance":
+            ms = best_comp_result.get("elapsed_ms")
+            if ms: signals.append(f"Load time {ms}ms vs client {client.get('elapsed_ms','?')}ms")
+
+        if not signals:
+            signals.append(f"Score {best_comp}/100 vs client {client_val}/100")
+
+        severity = "HIGH" if gap >= 25 else "MEDIUM"
+        insights.append({
+            "dimension": label,
+            "client_score": client_val,
+            "best_comp_score": best_comp,
+            "avg_comp_score": avg_comp,
+            "gap": gap,
+            "best_competitor": f"{best_label} ({best_domain})",
+            "what_they_do": "; ".join(signals),
+            "action": WHAT_TO_DO.get(key, "Review competitor implementation."),
+            "severity": severity,
+        })
+
+    insights.sort(key=lambda x: -x["gap"])
+    return insights
+
+
 # ─────────────────────────────────────────────
 # PSI / CWV
 # ─────────────────────────────────────────────
@@ -885,12 +1039,202 @@ def analyze_page(url: str, use_ai: bool = False, topic_hint: str = None,
             result["ai_scores"] = ai_out.get("ai_scores")
             result["ai_findings"] = ai_out.get("ai_findings")
         else:
-            result["_ai_error"] = "OpenAI returned no result (check key/quotas)."
+            result["_ai_error"] = "Gemini returned no result — check GEMINI_API_KEY and quotas."
 
     result.update(compute_scores(result))
     result["_recommendations"] = generate_recommendations(result)
     result["_issue_count"] = len(result["_recommendations"])
     return result
+
+# ─────────────────────────────────────────────
+# Word doc export
+# ─────────────────────────────────────────────
+def build_recommendations_docx(results: List[dict], client_url: str = "") -> bytes:
+    """Build a Word document of prioritised recommendations for the client page."""
+    try:
+        from docx import Document
+        from docx.shared import Pt, RGBColor, Inches
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        return b""
+
+    doc = Document()
+
+    # ── Styles ──
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10)
+
+    def _set_cell_bg(cell, hex_colour):
+        tc = cell._tc; tcPr = tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), hex_colour)
+        tcPr.append(shd)
+
+    def _heading(text, level=1):
+        p = doc.add_paragraph()
+        run = p.add_run(text)
+        run.bold = True
+        run.font.size = Pt(16 if level==1 else 13 if level==2 else 11)
+        run.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
+        if level == 1: p.paragraph_format.space_before = Pt(18)
+        p.paragraph_format.space_after = Pt(4)
+        return p
+
+    # ── Cover ──
+    title_p = doc.add_paragraph()
+    tr = title_p.add_run("SEO & AEO Audit — Recommendations Report")
+    tr.bold = True; tr.font.size = Pt(20)
+    tr.font.color.rgb = RGBColor(0x1e, 0x29, 0x3b)
+    title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    from datetime import date as _date
+    sub_p = doc.add_paragraph()
+    sub_p.add_run(f"Generated {_date.today().strftime('%d %B %Y')}").font.size = Pt(10)
+    sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    client_res = results[0]
+    comps_res  = results[1:]
+    domain = client_res.get("_domain") or client_url
+    url_p = doc.add_paragraph()
+    url_p.add_run(f"Client: {domain}  |  Overall score: {client_res.get('overall_score','?')}/100")
+    url_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    doc.add_paragraph()
+
+    # ── Score summary table ──
+    _heading("Score Summary", 2)
+    SCORE_GROUPS = [
+        ("Overall",       "overall_score"),
+        ("Technical",     "score_tech"),
+        ("Performance",   "score_performance"),
+        ("AEO",           "score_aeo"),
+        ("Content",       "score_readability"),
+        ("Social/Schema", "score_social"),
+        ("Headings",      "score_headings"),
+        ("On-Page",       "score_title"),
+    ]
+    all_sites = [client_res] + comps_res
+    tbl = doc.add_table(rows=1+len(SCORE_GROUPS), cols=1+len(all_sites))
+    tbl.style = "Table Grid"
+    hdr = tbl.rows[0].cells
+    _set_cell_bg(hdr[0], "1e293b")
+    hdr[0].paragraphs[0].add_run("Metric").bold = True
+    hdr[0].paragraphs[0].runs[0].font.color.rgb = RGBColor(0xff,0xff,0xff)
+    for j, r in enumerate(all_sites):
+        _set_cell_bg(hdr[j+1], "1e293b")
+        lbl = r.get("_label","")
+        run = hdr[j+1].paragraphs[0].add_run(lbl)
+        run.bold = True; run.font.color.rgb = RGBColor(0xff,0xff,0xff)
+    for i,(lbl,key) in enumerate(SCORE_GROUPS):
+        row = tbl.rows[i+1].cells
+        row[0].paragraphs[0].add_run(lbl)
+        for j,r in enumerate(all_sites):
+            val = r.get(key)
+            txt = f"{val}/100" if val is not None else "—"
+            run = row[j+1].paragraphs[0].add_run(txt)
+            run.bold = (j==0)
+            if val is not None:
+                if val>=80: run.font.color.rgb = RGBColor(0x16,0x65,0x34)
+                elif val>=60: run.font.color.rgb = RGBColor(0x85,0x4d,0x0e)
+                else: run.font.color.rgb = RGBColor(0x99,0x1b,0x1b)
+    doc.add_paragraph()
+
+    # ── Client Recommendations ──
+    recs = client_res.get("_recommendations") or []
+    _heading("Prioritised Recommendations — Client Page", 2)
+    doc.add_paragraph(
+        f"The following {len(recs)} recommendations are sorted by priority. "
+        "Competitor scores are used to elevate priority where competitors outperform the client."
+    )
+
+    PRI_COLOURS = {"HIGH": "450a0a", "MEDIUM": "422006", "LOW": "052e16"}
+    PRI_TEXT    = {"HIGH": "f87171", "MEDIUM": "fbbf24", "LOW": "4ade80"}
+
+    if recs:
+        rt = doc.add_table(rows=1, cols=4)
+        rt.style = "Table Grid"
+        for i,hdr_txt in enumerate(["Category","Priority","Score","Recommendation"]):
+            c = rt.rows[0].cells[i]
+            _set_cell_bg(c, "1e293b")
+            run = c.paragraphs[0].add_run(hdr_txt)
+            run.bold = True; run.font.color.rgb = RGBColor(0xff,0xff,0xff)
+        rt.columns[0].width = Inches(1.1)
+        rt.columns[1].width = Inches(0.8)
+        rt.columns[2].width = Inches(0.7)
+        rt.columns[3].width = Inches(4.0)
+
+        for rec in recs:
+            row = rt.add_row().cells
+            pri = rec.get("priority","")
+            bg  = PRI_COLOURS.get(pri,"1e293b")
+            row[0].paragraphs[0].add_run(rec.get("category",""))
+            r1 = row[1].paragraphs[0].add_run(pri)
+            _set_cell_bg(row[1], bg)
+            try: r1.font.color.rgb = RGBColor(*[int(PRI_TEXT.get(pri,"ffffff")[i:i+2],16) for i in (0,2,4)])
+            except: pass
+            r1.bold = True
+            sc = rec.get("score")
+            row[2].paragraphs[0].add_run(f"{sc}/100" if sc is not None else "—")
+            row[3].paragraphs[0].add_run(rec.get("message",""))
+        doc.add_paragraph()
+
+    # ── Competitor insights ──
+    insights = generate_competitor_insights(client_res, comps_res)
+    if insights:
+        _heading("Where Competitors Are Outperforming the Client", 2)
+        doc.add_paragraph(
+            "The following areas show the largest gaps between the client and competitor pages, "
+            "with specific signals observed on the best-performing competitor."
+        )
+        it = doc.add_table(rows=1, cols=5)
+        it.style = "Table Grid"
+        for i,hdr_txt in enumerate(["Area","Client","Best Comp","Gap","What to adopt"]):
+            c = it.rows[0].cells[i]
+            _set_cell_bg(c, "1e293b")
+            run = c.paragraphs[0].add_run(hdr_txt)
+            run.bold = True; run.font.color.rgb = RGBColor(0xff,0xff,0xff)
+        it.columns[0].width = Inches(1.3)
+        it.columns[1].width = Inches(0.6)
+        it.columns[2].width = Inches(0.7)
+        it.columns[3].width = Inches(0.5)
+        it.columns[4].width = Inches(3.5)
+
+        for ins in insights:
+            row = it.add_row().cells
+            row[0].paragraphs[0].add_run(ins["dimension"])
+            row[1].paragraphs[0].add_run(str(ins["client_score"]))
+            row[2].paragraphs[0].add_run(str(ins["best_comp_score"]))
+            gap_run = row[3].paragraphs[0].add_run(f"+{ins['gap']}")
+            gap_run.font.color.rgb = RGBColor(0x99,0x1b,0x1b); gap_run.bold = True
+            row[4].paragraphs[0].add_run(f"{ins['what_they_do']} → {ins['action']}")
+        doc.add_paragraph()
+
+    # ── Competitor issue summary (their weaknesses = your opportunity) ──
+    if comps_res:
+        _heading("Competitor Weaknesses — Your Opportunities", 2)
+        doc.add_paragraph(
+            "Where competitors score poorly, there is an opportunity to differentiate. "
+            "Addressing these on the client page creates a clear quality gap."
+        )
+        for comp in comps_res:
+            comp_recs = comp.get("_recommendations") or []
+            high_recs = [r for r in comp_recs if r.get("priority")=="HIGH"]
+            if not high_recs: continue
+            doc.add_paragraph(f"{comp.get('_label','')} ({comp.get('_domain','')})").bold = True
+            for rec in high_recs[:8]:
+                p = doc.add_paragraph(style="List Bullet")
+                p.add_run(f"[{rec['category']}] ").bold = True
+                p.add_run(rec.get("message",""))
+        doc.add_paragraph()
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
 
 # ─────────────────────────────────────────────
 # CWV grading helpers
@@ -1102,6 +1446,8 @@ if run_btn:
                         "phrase_all", {"phrase": kw_str, "database": semrush_db, "export_columns": "Ph,Nq,Kd"},
                         base=SEMRUSH_DATA_BASE
                     )
+                    # Store seeds for later cross-domain ranking lookup
+                    res["semrush"]["_keyword_seeds"] = seeds
 
         _results.append(res)
         progress.progress(i / len(targets))
@@ -1112,18 +1458,32 @@ if run_btn:
     _comps  = _results[1:]
     _client["_recommendations"] = generate_recommendations(_client, _comps)
 
+    # If semrush + topic: do cross-domain keyword rankings in one pass
+    _kw_rankings_df = None
+    if use_semrush and sm_ok and topic_hint:
+        # Collect seeds from client (already fetched)
+        _seeds = (_results[0].get("semrush") or {}).get("_keyword_seeds") or []
+        if not _seeds:
+            _seeds = ai_keyword_seeds(topic_hint, 20)
+        if _seeds:
+            _all_domains = [r.get("_domain","") for r in _results if r.get("_domain")]
+            _kw_rankings_df = semrush_keyword_positions(_seeds[:20], _all_domains, semrush_db)
+
     # Persist to session state
-    st.session_state["audit_results"]  = _results
-    st.session_state["audit_topic"]    = topic_hint
-    st.session_state["audit_semrush"]  = use_semrush
+    st.session_state["audit_results"]    = _results
+    st.session_state["audit_topic"]      = topic_hint
+    st.session_state["audit_semrush"]    = use_semrush
+    st.session_state["kw_rankings_df"]   = _kw_rankings_df
 
 # ── Render from session state (survives widget reruns) ──
 if "audit_results" not in st.session_state:
     st.stop()
 
-results = st.session_state["audit_results"]
-client = results[0]
-comps  = results[1:]
+results        = st.session_state["audit_results"]
+client         = results[0]
+comps          = results[1:]
+kw_rankings_df = st.session_state.get("kw_rankings_df")
+_stored_topic  = st.session_state.get("audit_topic","")
 
 # ─────────────────────────────────────────────
 # DASHBOARD TABS
@@ -1192,10 +1552,16 @@ with tabs[0]:
             name=r.get("_label","")
         ))
     fig_radar.update_layout(
-        polar=dict(radialaxis=dict(range=[0,100], gridcolor="#1e293b"),
-                   angularaxis=dict(gridcolor="#1e293b"), bgcolor="#0f172a"),
-        paper_bgcolor="#0a0f1e", font=dict(color="#e2e8f0", size=11),
-        legend=dict(bgcolor="#0f172a", bordercolor="#1e293b"),
+        polar=dict(
+            radialaxis=dict(range=[0,100], gridcolor="rgba(100,116,139,0.4)",
+                            tickfont=dict(color="#475569", size=10)),
+            angularaxis=dict(gridcolor="rgba(100,116,139,0.3)",
+                             tickfont=dict(color="#1e293b", size=11)),
+            bgcolor="rgba(248,250,252,0.8)"
+        ),
+        paper_bgcolor="rgba(0,0,0,0)", font=dict(color="#1e293b", size=11),
+        legend=dict(bgcolor="rgba(255,255,255,0.95)", bordercolor="#e2e8f0",
+                    borderwidth=1, font=dict(color="#1e293b")),
         margin=dict(l=60,r=60,t=40,b=40), height=380
     )
     st.plotly_chart(fig_radar, use_container_width=True)
@@ -1210,9 +1576,14 @@ with tabs[0]:
                      x="Metric", y="Score", color="Site", barmode="group",
                      color_discrete_sequence=[c[0] for c in colours],
                      template="plotly_dark")
-    fig_bar.update_layout(paper_bgcolor="#0a0f1e", plot_bgcolor="#0a0f1e",
-                           legend=dict(bgcolor="#0f172a"), height=300,
-                           margin=dict(l=20,r=20,t=20,b=20))
+    fig_bar.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(248,250,252,1)",
+        legend=dict(bgcolor="rgba(255,255,255,0.95)", bordercolor="#e2e8f0",
+                    borderwidth=1, font=dict(color="#1e293b")),
+        font=dict(color="#1e293b"),
+        xaxis=dict(tickfont=dict(color="#1e293b"), gridcolor="rgba(0,0,0,0.05)"),
+        yaxis=dict(tickfont=dict(color="#1e293b"), gridcolor="rgba(0,0,0,0.08)"),
+        height=300, margin=dict(l=20,r=20,t=20,b=20))
     st.plotly_chart(fig_bar, use_container_width=True)
 
     # Quick summary table
@@ -1418,10 +1789,14 @@ with tabs[2]:
                       "AEO Score": [r.get("score_aeo",0) for r in results],
                       "Questions on page": [r.get("aeo",{}).get("question_count",0) for r in results]}
     aeo_fig = px.bar(pd.DataFrame(aeo_score_data), x="Site", y="AEO Score",
-                     color="Site", color_discrete_sequence=["#22d3ee","#f472b6","#a78bfa","#fb923c"],
-                     template="plotly_dark", range_y=[0,100])
-    aeo_fig.update_layout(paper_bgcolor="#0a0f1e", plot_bgcolor="#0a0f1e", height=280,
-                           margin=dict(l=20,r=20,t=20,b=20), showlegend=False)
+                     color="Site", color_discrete_sequence=["#0ea5e9","#e879f9","#818cf8","#fb923c"],
+                     range_y=[0,100])
+    aeo_fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(248,250,252,1)",
+        font=dict(color="#1e293b"),
+        xaxis=dict(tickfont=dict(color="#1e293b")),
+        yaxis=dict(tickfont=dict(color="#1e293b"), gridcolor="rgba(0,0,0,0.08)"),
+        height=280, margin=dict(l=20,r=20,t=20,b=20), showlegend=False)
     st.plotly_chart(aeo_fig, use_container_width=True)
 
 # ──────────────────────────────────────────────
@@ -1503,6 +1878,47 @@ with tabs[3]:
             st.markdown("### Client Domain — Top Backlink Anchors")
             st.dataframe(pd.DataFrame(cli_anchors).head(10), use_container_width=True, hide_index=True)
 
+        # ── Keyword rankings across all sites ──
+        if kw_rankings_df is not None and not kw_rankings_df.empty:
+            st.markdown("---")
+            st.markdown("### 🎯 Keyword Rankings — Client vs Competitors")
+            st.caption(
+                f"SERP positions (top 20) for keywords related to: *{_stored_topic}*. "
+                "'>20' means not found in top 20 results."
+            )
+            # Style: highlight client column, colour-code positions
+            domain_cols = [c for c in kw_rankings_df.columns if c not in ["Keyword","Search Volume"]]
+            client_domain = client.get("_domain","")
+
+            def _pos_style(v):
+                try:
+                    n = int(str(v))
+                    if n <= 3:   return "background:#052e16;color:#4ade80;font-weight:700"
+                    if n <= 10:  return "background:#052e1680;color:#4ade80"
+                    if n <= 20:  return "background:#42200680;color:#fbbf24"
+                    return ""
+                except:
+                    if str(v) == ">20": return "color:#ef444480"
+                    return ""
+
+            styled = kw_rankings_df.style.applymap(_pos_style, subset=domain_cols)
+            st.dataframe(styled, use_container_width=True, hide_index=True)
+
+            # Quick summary: how many top-10 rankings does each site have?
+            st.markdown("**Top 10 rankings count by site:**")
+            t10_cols = st.columns(len(domain_cols))
+            for col, dom in zip(t10_cols, domain_cols):
+                count = sum(
+                    1 for v in kw_rankings_df[dom]
+                    if str(v).isdigit() and int(str(v)) <= 10
+                )
+                with col:
+                    label = "🟢 " if dom == client_domain else "🔵 "
+                    st.metric(label + dom, f"{count} kw in top 10")
+        elif _stored_topic and use_semrush:
+            st.markdown("---")
+            st.info("Keyword ranking data not available — re-run the audit with a topic hint and Semrush enabled.")
+
 # ──────────────────────────────────────────────
 # TAB 5 — RECOMMENDATIONS
 # ──────────────────────────────────────────────
@@ -1552,11 +1968,41 @@ with tabs[4]:
               <div class="rec-score">{score_txt}{comp_note}</div>
             </div>""", unsafe_allow_html=True)
 
-    # Competitor recs overview
+    # ── Where competitors outperform client ──
     if comps:
         st.markdown("---")
-        st.markdown("### Competitor Issue Summary")
-        st.caption("Issues found on competitor pages — opportunities to maintain your advantage or learn from theirs")
+        st.markdown("### 📊 Where Competitors Outperform the Client")
+        st.caption("Areas where competitor pages score measurably higher — with specific signals observed and what to adopt")
+        insights = generate_competitor_insights(client, comps)
+        if insights:
+            ins_df = pd.DataFrame([{
+                "Area":              ins["dimension"],
+                "Client Score":      ins["client_score"],
+                "Best Competitor":   ins["best_comp_score"],
+                "Gap":               f"+{ins['gap']}",
+                "Best Comp Site":    ins["best_competitor"],
+                "What they do":      ins["what_they_do"],
+                "Recommended action":ins["action"],
+                "Severity":          ins["severity"],
+            } for ins in insights])
+            # Colour-code the Gap column via styler
+            def _colour_gap(v):
+                try:
+                    n = int(str(v).replace("+",""))
+                    if n >= 25: return "color:#ef4444;font-weight:700"
+                    if n >= 10: return "color:#f59e0b;font-weight:600"
+                    return ""
+                except: return ""
+            st.dataframe(ins_df.style.applymap(_colour_gap, subset=["Gap"]),
+                         use_container_width=True, hide_index=True)
+        else:
+            st.success("✅ Client page is competitive across all measured dimensions.")
+
+    # ── Competitor weakness summary ──
+    if comps:
+        st.markdown("---")
+        st.markdown("### Competitor Weaknesses — Your Opportunities")
+        st.caption("Issues found on competitor pages. These are areas to stay ahead or differentiate.")
         for comp in comps:
             with st.expander(f"{comp.get('_label','')} — {comp.get('_domain','')}"):
                 comp_recs = comp.get("_recommendations") or []
@@ -1577,7 +2023,7 @@ with tabs[5]:
     st.markdown("### Download Audit Results")
     st.caption("All exports include client and competitor data")
 
-    dl1, dl2, dl3 = st.columns(3)
+    dl1, dl2 = st.columns(2)
 
     with dl1:
         st.markdown("#### 📋 Scores CSV")
@@ -1597,9 +2043,31 @@ with tabs[5]:
                             mime="text/csv",
                             use_container_width=True)
 
+    st.markdown("---")
+    dl3, dl4 = st.columns(2)
+
     with dl3:
+        st.markdown("#### 📝 Recommendations Word Doc")
+        st.caption("Prioritised recs + competitor insights in a formatted .docx report")
+        try:
+            docx_bytes = build_recommendations_docx(results, client_url)
+            if docx_bytes:
+                client_slug = (client.get("_domain","audit") or "audit").replace(".","_")
+                st.download_button(
+                    "Download Recommendations (.docx)",
+                    data=docx_bytes,
+                    file_name=f"seo_recs_{client_slug}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    use_container_width=True
+                )
+            else:
+                st.warning("python-docx not installed — add `python-docx` to requirements.txt")
+        except Exception as e:
+            st.error(f"Word doc error: {e}")
+
+    with dl4:
         st.markdown("#### 📦 Full ZIP")
-        st.caption("Scores, recommendations and raw JSON in one file")
+        st.caption("Scores, recommendations CSV and raw JSON in one file")
         st.download_button("Download Full ZIP",
                             data=build_zip(results),
                             file_name="seo_aeo_audit.zip",
@@ -1615,4 +2083,4 @@ with tabs[5]:
 # Footer
 # ─────────────────────────────────────────────
 st.markdown("---")
-st.caption("SEO & AEO Audit Tool · On-page · Technical · AEO · E-E-A-T · Core Web Vitals · Semrush · OpenAI · v2.0")
+st.caption("SEO & AEO Audit Tool · On-page · Technical · AEO · E-E-A-T · Core Web Vitals · Semrush · Gemini 2.5 Flash · v3.0")
