@@ -942,6 +942,96 @@ def generate_recommendations(result: dict, competitor_results: List[dict] = None
     return generate_recommendations_fallback(result, competitor_results)
 
 
+
+def generate_keyword_gap_insights(kw_rankings_df, client_domain: str,
+                                   comp_domains: List[str]) -> List[dict]:
+    """
+    Analyses keyword ranking gaps between client and competitors.
+    Returns actionable insights: missing rankings, quick wins (page 2), ranking gaps.
+    """
+    if kw_rankings_df is None or kw_rankings_df.empty: return []
+    insights = []
+
+    def _pos(v):
+        try: return int(str(v))
+        except: return 99  # ">20" or missing
+
+    for _, row in kw_rankings_df.iterrows():
+        kw = row.get("Keyword", "")
+        sv = row.get("Search Volume")
+        client_pos = _pos(row.get(client_domain, ">20"))
+        comp_positions = {dom: _pos(row.get(dom, ">20")) for dom in comp_domains if dom in row}
+        best_comp_pos = min(comp_positions.values()) if comp_positions else 99
+        best_comp_dom = min(comp_positions, key=comp_positions.get) if comp_positions else ""
+        sv_label = f"{sv:,}" if isinstance(sv, int) else "?"
+
+        if client_pos <= 3:
+            continue  # already top 3
+
+        if client_pos == 99 and best_comp_pos <= 10:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": "Not ranked",
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Missing ranking",
+                "priority": "HIGH" if best_comp_pos <= 3 else "MEDIUM",
+                "action": (
+                    f"Create or significantly improve content targeting '{kw}'. "
+                    f"{best_comp_dom} ranks #{best_comp_pos}. "
+                    "Ensure the page directly answers user intent, includes the term in H1/title/meta, "
+                    "and has supporting FAQ or structured content."
+                )
+            })
+        elif client_pos == 99 and best_comp_pos <= 20:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": "Not ranked",
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Missing ranking",
+                "priority": "MEDIUM",
+                "action": (
+                    f"Target '{kw}' with a dedicated page section or supporting content. "
+                    f"{best_comp_dom} ranks #{best_comp_pos}."
+                )
+            })
+        elif 11 <= client_pos <= 20:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": client_pos,
+                "best_comp_position": best_comp_pos if best_comp_pos < 99 else ">20",
+                "best_comp_domain": best_comp_dom,
+                "type": "Quick win (page 2)",
+                "priority": "HIGH",
+                "action": (
+                    f"Currently ranking #{client_pos} — page 2. "
+                    "Quick wins: strengthen internal links to this page, "
+                    "improve title tag to include the keyword closer to the start, "
+                    "add the term to the H1 or first H2, expand content depth. "
+                    "A small improvement could move this to page 1."
+                )
+            })
+        elif 4 <= client_pos <= 10 and best_comp_pos < client_pos:
+            insights.append({
+                "keyword": kw, "search_volume": sv_label,
+                "client_position": client_pos,
+                "best_comp_position": best_comp_pos,
+                "best_comp_domain": best_comp_dom,
+                "type": "Ranking gap (top 10)",
+                "priority": "MEDIUM",
+                "action": (
+                    f"Ranking #{client_pos}, {best_comp_dom} ranks #{best_comp_pos}. "
+                    "Review their page: check content depth, schema, internal links and "
+                    "anchor text. Match or exceed their approach."
+                )
+            })
+
+    priority_order = {"HIGH": 0, "MEDIUM": 1}
+    type_order = {"Quick win (page 2)": 0, "Missing ranking": 1, "Ranking gap (top 10)": 2}
+    insights.sort(key=lambda x: (priority_order.get(x["priority"],9), type_order.get(x["type"],9)))
+    return insights
+
 def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
     """
     Compare client vs competitors across all scored dimensions.
