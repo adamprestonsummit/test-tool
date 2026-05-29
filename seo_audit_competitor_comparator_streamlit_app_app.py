@@ -1901,7 +1901,7 @@ with tabs[3]:
                     if str(v) == ">20": return "color:#ef444480"
                     return ""
 
-            styled = kw_rankings_df.style.applymap(_pos_style, subset=domain_cols)
+            styled = kw_rankings_df.style.map(_pos_style, subset=domain_cols)
             st.dataframe(styled, use_container_width=True, hide_index=True)
 
             # Quick summary: how many top-10 rankings does each site have?
@@ -1993,7 +1993,7 @@ with tabs[4]:
                     if n >= 10: return "color:#f59e0b;font-weight:600"
                     return ""
                 except: return ""
-            st.dataframe(ins_df.style.applymap(_colour_gap, subset=["Gap"]),
+            st.dataframe(ins_df.style.map(_colour_gap, subset=["Gap"]),
                          use_container_width=True, hide_index=True)
         else:
             st.success("✅ Client page is competitive across all measured dimensions.")
