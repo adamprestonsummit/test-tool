@@ -714,190 +714,232 @@ def _score_js(js: dict) -> int:
 # ─────────────────────────────────────────────
 # Recommendations engine
 # ─────────────────────────────────────────────
-SCORE_RECS = {
-    "score_title":       ("On-Page",      "HIGH",   "Rewrite <title> to 35–65 chars with primary keyword near the start. Unique per page."),
-    "score_meta_desc":   ("On-Page",      "HIGH",   "Write a 70–160 char meta description with a benefit-led CTA and the main keyword naturally included."),
-    "score_h1":          ("On-Page",      "HIGH",   "Use exactly one descriptive H1 that matches the page's primary search intent."),
-    "score_links":       ("On-Page",      "MEDIUM", "Improve internal linking — add contextual links to key pages; aim for internal links to be ~60% of all links."),
-    "score_img_alt":     ("On-Page",      "MEDIUM", "Add descriptive, concise alt text to images. Decorative images can use empty alt=''."),
-    "score_headings":    ("On-Page",      "MEDIUM", "Fix heading hierarchy: one H1 → sequential H2s → H3s. Avoid skipping levels or empty headings."),
-    "score_anchor":      ("On-Page",      "MEDIUM", "Replace vague link anchors ('click here', 'read more') with descriptive keyword-rich text."),
-    "score_tech":        ("Technical",    "HIGH",   "Fix technical basics: enforce HTTPS, valid 200 status, robots.txt, sitemap.xml, mobile viewport, avoid noindex."),
-    "score_js":          ("Technical",    "MEDIUM", "Trim JavaScript: remove unused scripts, defer non-critical JS, ensure core content is server-rendered."),
-    "score_performance": ("Performance",  "HIGH",   "Speed up page: compress images, lazy-load media, minify CSS/JS, enable HTTP/2 & caching. Fix Core Web Vitals regressions."),
-    "score_social":      ("Social/Schema","MEDIUM", "Add Open Graph & Twitter Card meta tags. Implement JSON-LD structured data (at minimum Organization/WebPage)."),
-    "score_readability": ("Content",      "MEDIUM", "Write in plain language: shorter sentences, simpler words. Aim for Flesch Reading Ease 50–70."),
-    "score_originality": ("Content",      "MEDIUM", "Reduce repetition; add unique insights, original data, examples, or proprietary analysis."),
-    "score_tone":        ("Content",      "LOW",    "Dial down hype/buzzwords and exclamations. Prefer concrete benefits and specifics over superlatives."),
-    "score_aeo":         ("AEO",          "HIGH",   "Improve Answer Engine Optimisation: add FAQPage/HowTo schema, use Q&A heading patterns, include direct answer summaries."),
-    "score_ai_intent":   ("Content",      "HIGH",   "Ensure copy directly answers the primary search intent; add/clarify CTA and user-action paths."),
-    "score_ai_coverage": ("Content",      "HIGH",   "Cover missing subtopics with dedicated H2/H3 sections, examples and supporting evidence."),
-    "score_ai_eeat":     ("Content",      "HIGH",   "Expose author credentials, cite sources, add about/contact/policy pages and 'last updated' timestamps."),
-    "score_ai_helpfulness":("Content",    "MEDIUM", "Add step-by-step guidance, evidence, data, worked examples, and comparisons."),
-    "score_ai_aeo":      ("AEO",          "HIGH",   "Structure content so AI/voice search can extract direct answers: short definitions, numbered steps, quick summaries."),
-    "score_ai_depth":    ("Content",      "MEDIUM", "Increase content depth: go beyond surface-level coverage with detailed explanations and supporting detail."),
-    "score_ai_conversion":("On-Page",     "MEDIUM", "Sharpen the value proposition above the fold; add trust signals (reviews, accreditations, stats) and clear CTAs."),
-}
 
-PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+# ─────────────────────────────────────────────
+# Recommendations — Gemini-powered (with fast fallback)
+# ─────────────────────────────────────────────
 
-def generate_recommendations(result: dict, competitor_results: List[dict] = None) -> List[dict]:
+def _build_page_brief(r: dict) -> str:
+    """Compact text summary of a page's signals — fed into Gemini prompt."""
+    aeo  = r.get("aeo", {}) or {}
+    hdgs = r.get("headings", {}) or {}
+    sm   = r.get("semrush", {}) or {}
+    dom_ov = sm.get("domain_organic") or {}
+    url_kws = (sm.get("url_keywords") or [])[:10]
+
+    lines = [
+        f"URL: {r.get('_final_url') or r.get('_url','')}",
+        f"Domain: {r.get('_domain','')}",
+        f"Title ({r.get('title_len',0)} chars): {r.get('title','')}",
+        f"Meta description ({r.get('meta_desc_len',0)} chars): {r.get('meta_desc','')}",
+        f"H1 ({r.get('h1_count',0)}): {'; '.join(r.get('h1_texts',[])[:3])}",
+        f"H2 count: {hdgs.get('h2_count',0)}, heading level skips: {hdgs.get('level_skips',0)}",
+        f"Schema types present: {', '.join(aeo.get('schema_types',[])) or 'NONE'}",
+        f"FAQPage schema: {aeo.get('faq_schema')}, HowTo schema: {aeo.get('howto_schema')}",
+        f"BreadcrumbList: {aeo.get('breadcrumb_schema')}, Article schema: {aeo.get('article_schema')}",
+        f"Open Graph: {r.get('og_present')}, Twitter Card: {r.get('twitter_present')}",
+        f"Internal links: {r.get('internal_links')}, External: {r.get('external_links')}",
+        f"Images: {r.get('images')}, Alt text coverage: {round((r.get('img_alt_ratio',0) or 0)*100)}%",
+        f"HTTPS: {r.get('https')}, Status: {r.get('status_code')}, Load: {r.get('elapsed_ms')}ms",
+        f"Page size: {round((r.get('page_bytes') or 0)/1024)}KB",
+        f"robots.txt: {r.get('robots_exists')}, sitemap.xml: {r.get('sitemap_exists')}",
+        f"Canonical: {r.get('canonical') or 'missing'}",
+        f"Noindex: {r.get('noindex')}, Viewport meta: {r.get('viewport_meta')}",
+        f"Flesch readability: {r.get('readability_fre')}",
+        f"Author/E-E-A-T signals: {aeo.get('author_signals')}, Citation signals: {aeo.get('cite_signals')}",
+        f"FAQ headings: {aeo.get('faq_headings')}, How-to headings: {aeo.get('how_to_headings')}",
+        f"Has list content: {aeo.get('has_lists')}, Short-answer signals: {aeo.get('short_answer_signals')}",
+        f"Organic keywords: {dom_ov.get('Or','?')}, Organic traffic: {dom_ov.get('Ot','?')}",
+        f"Traffic MoM: {dom_ov.get('Ot_mom_%','?')}%, Traffic YoY: {dom_ov.get('Ot_yoy_%','?')}%",
+    ]
+    if url_kws:
+        kw_strs = [f"{k.get('Ph','?')} (pos {k.get('Po','?')}, vol {k.get('Nq','?')})"
+                   for k in url_kws[:8]]
+        lines.append(f"Top ranking keywords: {'; '.join(kw_strs)}")
+
+    psi = r.get("psi_scores", {}) or {}
+    if psi:
+        lines.append(f"Lighthouse — Performance: {psi.get('performance','?')}, "
+                     f"SEO: {psi.get('seo','?')}, Accessibility: {psi.get('accessibility','?')}")
+    cwv = r.get("cwv", {}) or {}
+    if cwv.get("LCP_ms"):
+        lines.append(f"Core Web Vitals — LCP: {round(cwv['LCP_ms'])}ms, "
+                     f"CLS: {cwv.get('CLS','?')}, INP: {cwv.get('INP_ms','?')}ms")
+
+    scores = {k: r.get(k) for k in [
+        "overall_score","score_tech","score_performance","score_aeo",
+        "score_readability","score_social","score_headings","score_title",
+        "score_meta_desc","score_h1","score_anchor","score_img_alt","score_js",
+    ] if r.get(k) is not None}
+    lines.append("Scores (0-100): " + ", ".join(
+        f"{k.replace('score_','').replace('_',' ')}: {v}" for k,v in scores.items()))
+
+    return "\n".join(lines)
+
+
+def _build_kw_ranking_brief(kw_rankings_df, client_domain: str, comp_domains: List[str]) -> str:
+    """Compact keyword ranking comparison for the Gemini prompt."""
+    if kw_rankings_df is None or kw_rankings_df.empty:
+        return ""
+    lines = ["KEYWORD RANKINGS (client vs competitors):"]
+    for _, row in kw_rankings_df.iterrows():
+        kw = row.get("Keyword", "")
+        sv = row.get("Search Volume", "?")
+        client_pos = row.get(client_domain, ">20")
+        comp_parts = [f"{dom}=#{row[dom]}" for dom in comp_domains if dom in row]
+        lines.append(f"  '{kw}' (vol {sv}): client=#{client_pos}  {', '.join(comp_parts)}")
+    return "\n".join(lines[:25])
+
+
+def generate_ai_recommendations(
+    client: dict,
+    comps: List[dict],
+    topic_hint: str = "",
+    kw_rankings_df=None,
+    debug: bool = False
+) -> List[dict]:
+    """
+    Gemini-powered recommendations. Builds a rich context brief and asks Gemini
+    to produce specific, evidence-based, prioritised recommendations.
+    Falls back to rule-based if Gemini unavailable.
+    """
+    if not _get_gemini_key():
+        return generate_recommendations_fallback(client, comps)
+
+    client_brief = _build_page_brief(client)
+    comp_briefs  = ("\n\n---\n".join(
+        f"COMPETITOR {i+1}:\n{_build_page_brief(c)}" for i, c in enumerate(comps)
+    )) if comps else "No competitor pages provided."
+
+    kw_brief = _build_kw_ranking_brief(
+        kw_rankings_df,
+        client.get("_domain",""),
+        [c.get("_domain","") for c in comps if c.get("_domain")]
+    ) if kw_rankings_df is not None else ""
+
+    # Use a concrete example so Gemini understands the expected specificity
+    example_rec = (
+        '{"priority":"HIGH","category":"On-Page","title":"Rewrite meta title",'
+        '"specific_action":"Change title from its current value to something like '
+        'Fitted Kitchens | Design, Supply and Install | Wickes — '
+        'includes the primary keyword, is within 65 chars, and matches search intent.",'
+        '"why":"Current title is keyword-weak. Magnet ranks #3 for fitted kitchens UK '
+        '(vol 12,000) with a keyword-rich title. Client does not rank for this term.",'
+        '"effort":"Low","expected_impact":"Direct improvement to click-through rate '
+        'and keyword relevance signal for fitted kitchens terms."}'
+    )
+
+    prompt = (
+        "You are a senior SEO and AEO consultant doing a competitor gap analysis.\n"
+        "You have full technical and content data for a client page and their competitors.\n"
+        "Produce 10-15 SPECIFIC, EVIDENCE-BASED, PRIORITISED recommendations.\n\n"
+        "CRITICAL RULES:\n"
+        "- Every recommendation must reference ACTUAL DATA from the briefs (real title text, "
+        "real schema types, real keyword positions, real scores).\n"
+        "- Do NOT give generic advice. Say exactly what the current value is and exactly "
+        "what to change it to, and why — referencing the competitor data.\n"
+        "- For keyword gaps: name the keyword, client position, competitor position, "
+        "and the specific on-page change needed.\n"
+        "- For schema: name the exact @type missing and give a brief example of what to add.\n"
+        "- For content gaps: name the specific heading or section to add.\n"
+        "- Each rec MUST explain WHY a competitor ranks or scores better on that dimension.\n"
+        "- British English throughout.\n"
+        "- Return ONLY a valid JSON array — no markdown fences, no preamble.\n\n"
+        "OUTPUT: JSON array where each object has exactly these keys:\n"
+        '  "priority" (HIGH/MEDIUM/LOW), "category", "title" (max 8 words),\n'
+        '  "specific_action" (the exact change), "why" (evidence from the data),\n'
+        '  "effort" (Low/Medium/High), "expected_impact" (one sentence)\n\n'
+        f"EXAMPLE OF REQUIRED SPECIFICITY:\n[{example_rec}]\n\n"
+        "---\n"
+        f"TOPIC / SEARCH INTENT: {topic_hint or 'not specified'}\n\n"
+        f"CLIENT PAGE:\n{client_brief}\n\n"
+        f"COMPETITOR PAGES:\n{comp_briefs}\n\n"
+        f"{kw_brief}\n"
+        "---\n\n"
+        "Return ONLY the JSON array."
+    )
+
+    raw = _gemini_generate(prompt, debug=debug)
+    if not raw:
+        if debug: st.warning("Gemini returned nothing — falling back to rule-based recs")
+        return generate_recommendations_fallback(client, comps)
+
+    try:
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE).strip()
+        start_idx = raw.find("["); end_idx = raw.rfind("]")
+        if start_idx != -1 and end_idx > start_idx:
+            raw = raw[start_idx:end_idx+1]
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            raise ValueError("Not a list")
+
+        recs = []
+        for item in parsed:
+            if not isinstance(item, dict): continue
+            recs.append({
+                "category":        item.get("category", "General"),
+                "priority":        item.get("priority", "MEDIUM"),
+                "title":           item.get("title", ""),
+                "message":         item.get("specific_action", ""),
+                "why":             item.get("why", ""),
+                "effort":          item.get("effort", ""),
+                "expected_impact": item.get("expected_impact", ""),
+                "score":           None,
+                "comp_avg":        None,
+                "score_key":       "ai_generated",
+                "_ai":             True,
+            })
+        if debug: st.success(f"Gemini returned {len(recs)} recommendations")
+        return recs
+
+    except Exception as e:
+        if debug: st.warning(f"Gemini JSON parse failed ({e}) — falling back to rule-based recs")
+        return generate_recommendations_fallback(client, comps)
+
+
+def generate_recommendations_fallback(result: dict, competitor_results: List[dict] = None) -> List[dict]:
+    """Rule-based fallback used when Gemini is not available."""
+    SCORE_RECS_FB = {
+        "score_title":       ("On-Page",     "HIGH",   "Rewrite title to 35-65 chars with primary keyword near the start."),
+        "score_meta_desc":   ("On-Page",     "HIGH",   "Write a 70-160 char meta description with a benefit-led CTA."),
+        "score_h1":          ("On-Page",     "HIGH",   "Use exactly one descriptive H1 matching primary search intent."),
+        "score_links":       ("On-Page",     "MEDIUM", "Improve internal linking — add contextual links to key pages."),
+        "score_img_alt":     ("On-Page",     "MEDIUM", "Add descriptive alt text to all meaningful images."),
+        "score_headings":    ("On-Page",     "MEDIUM", "Fix heading hierarchy: H1 then sequential H2/H3."),
+        "score_anchor":      ("On-Page",     "MEDIUM", "Replace vague anchors with descriptive keyword-rich text."),
+        "score_tech":        ("Technical",   "HIGH",   "Fix HTTPS, status code, robots.txt, sitemap, viewport, canonical."),
+        "score_js":          ("Technical",   "MEDIUM", "Trim JavaScript: defer non-critical scripts."),
+        "score_performance": ("Performance", "HIGH",   "Improve Core Web Vitals: compress images, minify CSS/JS."),
+        "score_social":      ("Schema",      "MEDIUM", "Add Open Graph, Twitter Card, and JSON-LD structured data."),
+        "score_readability": ("Content",     "MEDIUM", "Simplify language — target Flesch Reading Ease 50-70."),
+        "score_aeo":         ("AEO",         "HIGH",   "Add FAQPage/HowTo schema and Q&A heading patterns."),
+    }
+    PRIORITY_ORDER = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
     recs = []
-    for key, (category, priority, msg) in SCORE_RECS.items():
+    for key, (category, priority, msg) in SCORE_RECS_FB.items():
         score_val = result.get(key)
-        if score_val is None: continue
-        if score_val >= SCORE_THRESHOLD: continue
-
-        # Check if competitors do better
-        comp_avg = None
-        comp_note = ""
+        if score_val is None or score_val >= 70: continue
+        comp_avg = None; comp_note = ""
         if competitor_results:
             comp_scores = [c.get(key) for c in competitor_results if c.get(key) is not None]
             if comp_scores:
                 comp_avg = round(sum(comp_scores)/len(comp_scores))
                 if comp_avg > score_val + 10:
-                    comp_note = f" (Competitors avg {comp_avg}/100 — they are outperforming you here.)"
-                    # Elevate priority if competitors are beating you
-                    if priority == "LOW": priority = "MEDIUM"
-                    elif priority == "MEDIUM": priority = "HIGH"
-
+                    comp_note = f" (Competitors avg {comp_avg}/100 here.)"
+                    if priority == "MEDIUM": priority = "HIGH"
         recs.append({
-            "category":   category,
-            "priority":   priority,
-            "score":      score_val,
-            "comp_avg":   comp_avg,
-            "message":    msg + comp_note,
-            "score_key":  key,
+            "category": category, "priority": priority, "title": category,
+            "score": score_val, "comp_avg": comp_avg,
+            "message": msg + comp_note, "why": "", "effort": "", "expected_impact": "",
+            "score_key": key, "_ai": False,
         })
-
-    # Specific nudges
-    def nudge(cat, pri, msg):
-        recs.append({"category": cat, "priority": pri, "score": None, "comp_avg": None, "message": msg, "score_key": "specific"})
-
-    if result.get("title_len",0) == 0:      nudge("On-Page","HIGH","Missing <title> tag — add one with primary keyword.")
-    if result.get("meta_desc_len",0) == 0:  nudge("On-Page","HIGH","Missing meta description — add 70–160 char compelling summary.")
-    if result.get("h1_count",0) == 0:       nudge("On-Page","HIGH","No H1 tag found — add one descriptive H1.")
-    if result.get("title_len",0) > 65:      nudge("On-Page","MEDIUM","Title over 65 chars — trim to avoid SERP truncation.")
-    if (result.get("headings",{}) or {}).get("level_skips",0) > 0:
-        nudge("On-Page","MEDIUM","Heading level skips detected (e.g. H2→H4). Keep hierarchy sequential.")
-    if (result.get("js_reliance",{}) or {}).get("script_count",0) > 10:
-        nudge("Technical","MEDIUM","High script count (>10). Audit and remove non-essential JS.")
-    aeo = result.get("aeo",{}) or {}
-    if not aeo.get("faq_schema") and not aeo.get("faq_headings"):
-        nudge("AEO","HIGH","No FAQ content or FAQPage schema detected. Add Q&A sections to capture featured snippets and AI answers.")
-    if not aeo.get("author_signals"):
-        nudge("Content","HIGH","No author/E-E-A-T signals detected. Add author byline, credentials, and publication date.")
-    if not aeo.get("breadcrumb_schema"):
-        nudge("Technical","MEDIUM","No BreadcrumbList schema. Add breadcrumb structured data for enhanced SERP appearance.")
-
-    # AI findings as recs
-    ai_f = result.get("ai_findings") or {}
-    for s in (ai_f.get("schema_recommendations") or [])[:5]:
-        nudge("Social/Schema","MEDIUM",f"Add {s} JSON-LD schema markup.")
-    for s in (ai_f.get("aeo_opportunities") or [])[:5]:
-        # Only add if it's substantive (more than just "voice search for X")
-        if s and len(s) > 20:
-            nudge("AEO","HIGH",f"AEO: {s}")
-
-    # Sort by priority then score (worst first)
-    recs.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"],99), r["score"] or 0))
+    recs.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"],99), r.get("score") or 0))
     return recs
 
-def generate_keyword_gap_insights(kw_rankings_df, client_domain: str,
-                                   comp_domains: List[str]) -> List[dict]:
-    """
-    Analyses keyword ranking gaps between client and competitors.
-    Returns a list of actionable insights per keyword cluster:
-    - keywords the client doesn't rank for (competitors do)
-    - keywords where the client ranks far below competitors
-    - quick-win keywords where client is close (pos 11-20)
-    """
-    if kw_rankings_df is None or kw_rankings_df.empty: return []
-    insights = []
 
-    def _pos(v):
-        try: return int(str(v))
-        except: return 99  # ">20" or missing = 99
-
-    for _, row in kw_rankings_df.iterrows():
-        kw = row.get("Keyword","")
-        sv = row.get("Search Volume")
-        client_pos = _pos(row.get(client_domain, ">20"))
-        comp_positions = {dom: _pos(row.get(dom, ">20")) for dom in comp_domains if dom in row}
-        best_comp_pos = min(comp_positions.values()) if comp_positions else 99
-        best_comp_dom = min(comp_positions, key=comp_positions.get) if comp_positions else ""
-
-        sv_label = f"{sv:,}" if isinstance(sv, int) else "?"
-
-        if client_pos <= 3:
-            continue  # already top 3, skip
-
-        if client_pos == 99 and best_comp_pos <= 10:
-            # Client not ranking; competitor in top 10
-            insights.append({
-                "keyword": kw, "search_volume": sv_label,
-                "client_position": "Not ranked",
-                "best_comp_position": best_comp_pos,
-                "best_comp_domain": best_comp_dom,
-                "type": "Missing ranking",
-                "priority": "HIGH" if best_comp_pos <= 3 else "MEDIUM",
-                "action": (
-                    f"Create or significantly improve content targeting '{kw}'. "
-                    f"{best_comp_dom} ranks #{best_comp_pos}. "
-                    "Ensure the page directly answers user intent, includes the term in H1/title/meta, "
-                    "and has supporting FAQ or structured content."
-                )
-            })
-        elif client_pos == 99 and best_comp_pos <= 20:
-            insights.append({
-                "keyword": kw, "search_volume": sv_label,
-                "client_position": "Not ranked",
-                "best_comp_position": best_comp_pos,
-                "best_comp_domain": best_comp_dom,
-                "type": "Missing ranking",
-                "priority": "MEDIUM",
-                "action": (
-                    f"Target '{kw}' with a dedicated page section or supporting content. "
-                    f"{best_comp_dom} ranks #{best_comp_pos}."
-                )
-            })
-        elif 11 <= client_pos <= 20:
-            gap = client_pos - best_comp_pos if best_comp_pos < client_pos else 0
-            insights.append({
-                "keyword": kw, "search_volume": sv_label,
-                "client_position": client_pos,
-                "best_comp_position": best_comp_pos if best_comp_pos < 99 else ">20",
-                "best_comp_domain": best_comp_dom,
-                "type": "Quick win (page 2)",
-                "priority": "HIGH",
-                "action": (
-                    f"Currently ranking #{client_pos} — page 2. "
-                    "Quick wins: strengthen internal links to this page, "
-                    "improve title tag to include '{kw}' closer to the start, "
-                    "add the term to the H1 or first H2, expand content depth. "
-                    "A small improvement could move this to page 1."
-                )
-            })
-        elif 4 <= client_pos <= 10 and best_comp_pos < client_pos:
-            insights.append({
-                "keyword": kw, "search_volume": sv_label,
-                "client_position": client_pos,
-                "best_comp_position": best_comp_pos,
-                "best_comp_domain": best_comp_dom,
-                "type": "Ranking gap (top 10)",
-                "priority": "MEDIUM",
-                "action": (
-                    f"Ranking #{client_pos}, {best_comp_dom} ranks #{best_comp_pos}. "
-                    "Review their page: check content depth, schema, internal links and "
-                    "anchor text pointing to the ranking page. Match or exceed."
-                )
-            })
-
-    # Sort: quick wins first (already close), then missing rankings by comp position
-    priority_order = {"HIGH": 0, "MEDIUM": 1}
-    type_order = {"Quick win (page 2)": 0, "Missing ranking": 1, "Ranking gap (top 10)": 2}
-    insights.sort(key=lambda x: (priority_order.get(x["priority"],9), type_order.get(x["type"],9)))
-    return insights
+def generate_recommendations(result: dict, competitor_results: List[dict] = None) -> List[dict]:
+    """Backward-compat shim — used during per-page analysis; AI recs generated post-audit."""
+    return generate_recommendations_fallback(result, competitor_results)
 
 
 def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
@@ -1001,6 +1043,7 @@ def generate_competitor_insights(client: dict, comps: List[dict]) -> List[dict]:
 
     insights.sort(key=lambda x: -x["gap"])
     return insights
+
 
 
 # ─────────────────────────────────────────────
@@ -1250,7 +1293,7 @@ def build_recommendations_docx(results: List[dict], client_url: str = "") -> byt
     doc.add_paragraph()
 
     # ── Client Recommendations ──
-    recs = client_res.get("_recommendations") or []
+    recs = client_res.get("_ai_recommendations") or client_res.get("_recommendations") or []
     _heading("Prioritised Recommendations — Client Page", 2)
     doc.add_paragraph(
         f"The following {len(recs)} recommendations are sorted by priority. "
@@ -1597,18 +1640,31 @@ if run_btn:
 
     _client = _results[0]
     _comps  = _results[1:]
+    # Initial fallback recs (fast)
     _client["_recommendations"] = generate_recommendations(_client, _comps)
 
     # If semrush + topic: do cross-domain keyword rankings in one pass
     _kw_rankings_df = None
     if use_semrush and sm_ok and topic_hint:
-        # Collect seeds from client (already fetched)
         _seeds = (_results[0].get("semrush") or {}).get("_keyword_seeds") or []
         if not _seeds:
             _seeds = ai_keyword_seeds(topic_hint, 20)
         if _seeds:
             _all_domains = [r.get("_domain","") for r in _results if r.get("_domain")]
             _kw_rankings_df = semrush_keyword_positions(_seeds[:20], _all_domains, semrush_db)
+
+    # Gemini-powered AI recommendations (runs after all data collected)
+    _ai_recs = None
+    if gemini_ok:
+        with st.spinner("🤖 Generating AI-powered recommendations with Gemini..."):
+            _ai_recs = generate_ai_recommendations(
+                _client, _comps,
+                topic_hint=topic_hint or "",
+                kw_rankings_df=_kw_rankings_df,
+                debug=debug_ai
+            )
+        if _ai_recs:
+            _client["_ai_recommendations"] = _ai_recs
 
     # Persist to session state
     st.session_state["audit_results"]    = _results
@@ -1632,7 +1688,7 @@ _stored_topic  = st.session_state.get("audit_topic","")
 col_hdr, col_clear = st.columns([5,1])
 with col_clear:
     if st.button("🗑️ Clear & reset", use_container_width=True):
-        for k in ["audit_results","audit_topic","audit_semrush"]:
+        for k in ["audit_results","audit_topic","audit_semrush","kw_rankings_df"]:
             st.session_state.pop(k, None)
         st.rerun()
 
@@ -2064,14 +2120,27 @@ with tabs[3]:
 # TAB 5 — RECOMMENDATIONS
 # ──────────────────────────────────────────────
 with tabs[4]:
-    st.markdown("### Prioritised Recommendations for Client")
-    st.caption("Sorted by impact. Competitor data is used to elevate priority where you're being outperformed.")
+    # Use AI recs if available, otherwise fallback
+    _ai_recs_stored = client.get("_ai_recommendations")
+    recs = _ai_recs_stored if _ai_recs_stored else (client.get("_recommendations") or [])
+    is_ai_powered   = bool(_ai_recs_stored)
 
-    recs = client.get("_recommendations") or []
-    if not recs:
-        st.success("🎉 No critical issues detected for the client page.")
+    if is_ai_powered:
+        st.markdown("### 🤖 AI-Powered Recommendations")
+        st.caption(
+            "Generated by Gemini 2.5 Flash using actual page data, competitor analysis, "
+            "and Semrush keyword rankings. Every recommendation references real values from your pages."
+        )
     else:
-        # Filters
+        st.markdown("### Recommendations")
+        if gemini_ok:
+            st.info("Enable Gemini AI analysis and re-run the audit for AI-powered, page-specific recommendations.")
+        else:
+            st.caption("Rule-based recommendations. Add a GEMINI_API_KEY for AI-powered, page-specific analysis.")
+
+    if not recs:
+        st.success("🎉 No issues detected for the client page.")
+    else:
         f1, f2 = st.columns(2)
         with f1:
             cat_filter = st.multiselect("Filter by category",
@@ -2084,7 +2153,6 @@ with tabs[4]:
                     if (not cat_filter or r["category"] in cat_filter)
                     and (not pri_filter or r["priority"] in pri_filter)]
 
-        # Summary bar
         highs   = sum(1 for r in recs if r["priority"]=="HIGH")
         mediums = sum(1 for r in recs if r["priority"]=="MEDIUM")
         lows    = sum(1 for r in recs if r["priority"]=="LOW")
@@ -2098,15 +2166,45 @@ with tabs[4]:
 
         for rec in filtered:
             pri_cls = {"HIGH":"pill-high","MEDIUM":"pill-medium","LOW":"pill-low"}.get(rec["priority"],"pill-low")
-            comp_note = f" &nbsp;|&nbsp; Comp avg: <b>{rec['comp_avg']}</b>" if rec.get("comp_avg") else ""
-            score_txt = f"Score: <b>{rec['score']}/100</b>" if rec.get("score") is not None else ""
+            effort_badge = ""
+            if rec.get("effort"):
+                effort_colour = {"Low":"#052e16","Medium":"#422006","High":"#450a0a"}.get(rec["effort"],"#1e293b")
+                effort_text   = {"Low":"#4ade80","Medium":"#fbbf24","High":"#f87171"}.get(rec["effort"],"#94a3b8")
+                effort_badge  = (f'<span style="background:{effort_colour};color:{effort_text};'
+                                 f'border-radius:999px;padding:.15rem .5rem;font-size:.7rem;'
+                                 f'font-weight:700;margin-left:.4rem;">Effort: {rec["effort"]}</span>')
+
+            # Title line
+            title_str = f'<span style="font-weight:700;font-size:.95rem;color:#e2e8f0;">{rec.get("title","")}</span>' if rec.get("title") and rec.get("_ai") else ""
+
+            # Action (the specific thing to do)
+            action_str = rec.get("message","")
+
+            # Why (evidence / competitor context) — shown as subtle sub-text
+            why_str = ""
+            if rec.get("why"):
+                why_str = f'<div class="rec-score" style="margin-top:.35rem;font-size:.82rem;color:#94a3b8;"><b>Why:</b> {rec["why"]}</div>'
+
+            # Expected impact
+            impact_str = ""
+            if rec.get("expected_impact"):
+                impact_str = f'<div class="rec-score" style="margin-top:.2rem;font-size:.79rem;color:#64748b;"><b>Impact:</b> {rec["expected_impact"]}</div>'
+
+            # Score/comp context for fallback recs
+            meta_str = ""
+            if rec.get("score") is not None:
+                meta_str = f'<div class="rec-score">Score: <b>{rec["score"]}/100</b>'
+                if rec.get("comp_avg"): meta_str += f' &nbsp;|&nbsp; Comp avg: <b>{rec["comp_avg"]}</b>'
+                meta_str += "</div>"
+
             st.markdown(f"""
             <div class="rec-card">
-              <div class="rec-cat">{rec['category']} &nbsp;
-                <span class="{pri_cls}">{rec['priority']}</span>
+              <div class="rec-cat">{rec["category"]} &nbsp;
+                <span class="{pri_cls}">{rec["priority"]}</span>{effort_badge}
               </div>
-              <div class="rec-msg">{rec['message']}</div>
-              <div class="rec-score">{score_txt}{comp_note}</div>
+              {title_str}
+              <div class="rec-msg">{action_str}</div>
+              {why_str}{impact_str}{meta_str}
             </div>""", unsafe_allow_html=True)
 
     # ── Where competitors outperform client ──
@@ -2299,4 +2397,4 @@ with tabs[5]:
 # Footer
 # ─────────────────────────────────────────────
 st.markdown("---")
-st.caption("SEO & AEO Audit Tool · On-page · Technical · AEO · E-E-A-T · Core Web Vitals · Semrush · Gemini 2.5 Flash · v3.0")
+st.caption("SEO & AEO Audit Tool · On-page · Technical · AEO · E-E-A-T · Core Web Vitals · Semrush · Gemini 2.5 Flash · v4.0")
